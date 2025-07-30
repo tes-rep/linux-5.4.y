@@ -303,7 +303,7 @@ static void meson_clk_pll_init(struct clk_hw *hw)
 		meson_parm_write(clk->map, &pll->rst, 0);
 	}
 
-	return 0;
+	return;
 }
 
 static int meson_clk_pll_is_enabled(struct clk_hw *hw)
