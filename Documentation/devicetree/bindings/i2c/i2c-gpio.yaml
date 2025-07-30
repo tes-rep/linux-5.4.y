@@ -32,7 +32,11 @@ properties:
       from <dt-bindings/gpio/gpio.h> since the signal is by definition
       open drain.
     maxItems: 1
-
+    
+  i2c-gpio,sda-output-only:
+    description: sda as output only
+    type: boolean
+    
   i2c-gpio,scl-output-only:
     description: scl as output only
     type: boolean
