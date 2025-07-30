@@ -12,3 +12,4 @@ obj-$(CONFIG_HD44780)		+= hd44780.o
 obj-$(CONFIG_HT16K33)		+= ht16k33.o
 obj-$(CONFIG_PARPORT_PANEL)	+= panel.o
 obj-$(CONFIG_OPENVFD)           += openvfd/
+obj-$(CONFIG_FD6551) += fd6551.o
