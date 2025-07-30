@@ -522,7 +522,7 @@ const struct clk_ops meson_clk_pcie_pll_ops = {
 EXPORT_SYMBOL_GPL(meson_clk_pcie_pll_ops);
 
 const struct clk_ops meson_clk_pll_ops = {
-	.init		= meson_clk_pll_init,
+	.void		= meson_clk_pll_init,
 	.recalc_rate	= meson_clk_pll_recalc_rate,
 	.determine_rate	= meson_clk_pll_determine_rate,
 	.set_rate	= meson_clk_pll_set_rate,
