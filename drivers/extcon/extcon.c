@@ -135,7 +135,38 @@ static const struct __extcon_info {
 		.id = EXTCON_JACK_SPDIF_OUT,
 		.name = "SPDIF-OUT",
 	},
-
+#ifdef CONFIG_AMLOGIC_SND_SOC_AUGE
+	[EXTCON_SPDIFIN_SAMPLERATE] = {
+		.type = EXTCON_TYPE_MISC,
+		.id = EXTCON_SPDIFIN_SAMPLERATE,
+		.name = "SPDIFIN-SAMPLERATE",
+	},
+	[EXTCON_SPDIFIN_AUDIOTYPE] = {
+		.type = EXTCON_TYPE_MISC,
+		.id = EXTCON_SPDIFIN_AUDIOTYPE,
+		.name = "SPDIFIN-AUDIOTYPE",
+	},
+	[EXTCON_EARCRX_ATNDTYP_ARC] = {
+		.type = EXTCON_TYPE_MISC,
+		.id = EXTCON_EARCRX_ATNDTYP_ARC,
+		.name = "EARCRX-ARC",
+	},
+	[EXTCON_EARCRX_ATNDTYP_EARC] = {
+		.type = EXTCON_TYPE_MISC,
+		.id = EXTCON_EARCRX_ATNDTYP_EARC,
+		.name = "EARCRX-EARC",
+	},
+	[EXTCON_EARCTX_ATNDTYP_ARC] = {
+		.type = EXTCON_TYPE_MISC,
+		.id = EXTCON_EARCTX_ATNDTYP_ARC,
+		.name = "EARCTX-ARC",
+	},
+	[EXTCON_EARCTX_ATNDTYP_EARC] = {
+		.type = EXTCON_TYPE_MISC,
+		.id = EXTCON_EARCTX_ATNDTYP_EARC,
+		.name = "EARCTX-EARC",
+	},
+#endif
 	/* Display external connector */
 	[EXTCON_DISP_HDMI] = {
 		.type = EXTCON_TYPE_DISP,
@@ -196,14 +227,6 @@ static const struct __extcon_info {
  * @attr_name:		"name" sysfs entry
  * @attr_state:		"state" sysfs entry
  * @attrs:		the array pointing to attr_name and attr_state for attr_g
- * @usb_propval:	the array of USB connector properties
- * @chg_propval:	the array of charger connector properties
- * @jack_propval:	the array of jack connector properties
- * @disp_propval:	the array of display connector properties
- * @usb_bits:		the bit array of the USB connector property capabilities
- * @chg_bits:		the bit array of the charger connector property capabilities
- * @jack_bits:		the bit array of the jack connector property capabilities
- * @disp_bits:		the bit array of the display connector property capabilities
  */
 struct extcon_cable {
 	struct extcon_dev *edev;
@@ -1420,6 +1443,7 @@ const char *extcon_get_edev_name(struct extcon_dev *edev)
 {
 	return !edev ? NULL : edev->name;
 }
+EXPORT_SYMBOL_GPL(extcon_get_edev_name);
 
 static int __init extcon_class_init(void)
 {

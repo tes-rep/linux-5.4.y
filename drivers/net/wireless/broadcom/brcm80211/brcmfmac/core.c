@@ -290,7 +290,6 @@ static netdev_tx_t brcmf_netdev_start_xmit(struct sk_buff *skb,
 	struct brcmf_pub *drvr = ifp->drvr;
 	struct ethhdr *eh;
 	int head_delta;
-	unsigned int tx_bytes = skb->len;
 
 	brcmf_dbg(DATA, "Enter, bsscfgidx=%d\n", ifp->bsscfgidx);
 
@@ -333,7 +332,6 @@ static netdev_tx_t brcmf_netdev_start_xmit(struct sk_buff *skb,
 			bphy_err(drvr, "%s: failed to expand headroom\n",
 				 brcmf_ifname(ifp));
 			atomic_inc(&drvr->bus_if->stats.pktcow_failed);
-			dev_kfree_skb(skb);
 			goto done;
 		}
 	}
@@ -363,7 +361,7 @@ done:
 		ndev->stats.tx_dropped++;
 	} else {
 		ndev->stats.tx_packets++;
-		ndev->stats.tx_bytes += tx_bytes;
+		ndev->stats.tx_bytes += skb->len;
 	}
 
 	/* Return ok: we always eat the packet */
@@ -537,11 +535,6 @@ void brcmf_txfinalize(struct brcmf_if *ifp, struct sk_buff *txp, bool success)
 {
 	struct ethhdr *eh;
 	u16 type;
-
-	if (!ifp) {
-		brcmu_pkt_buf_free_skb(txp);
-		return;
-	}
 
 	eh = (struct ethhdr *)(txp->data);
 	type = ntohs(eh->h_proto);
@@ -1261,8 +1254,6 @@ int brcmf_attach(struct device *dev)
 
 	/* Link to bus module */
 	drvr->hdrlen = 0;
-	drvr->chan_stats = vzalloc(256 * sizeof(struct brcmf_chan_stats));
-	drvr->num_chan_stats = 256;
 
 	/* Attach and link in the protocol */
 	ret = brcmf_proto_attach(drvr);
@@ -1344,12 +1335,6 @@ void brcmf_detach(struct device *dev)
 
 	if (drvr == NULL)
 		return;
-
-	drvr->num_chan_stats = 0;
-	if (drvr->chan_stats) {
-		vfree(drvr->chan_stats);
-		drvr->chan_stats = NULL;
-	}
 
 #ifdef CONFIG_INET
 	unregister_inetaddr_notifier(&drvr->inetaddr_notifier);

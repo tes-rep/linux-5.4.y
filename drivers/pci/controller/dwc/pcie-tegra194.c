@@ -7,7 +7,6 @@
  * Author: Vidya Sagar <vidyas@nvidia.com>
  */
 
-#include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
@@ -322,7 +321,8 @@ static void apply_bad_link_workaround(struct pcie_port *pp)
 	 */
 	val = dw_pcie_readw_dbi(pci, pcie->pcie_cap_base + PCI_EXP_LNKSTA);
 	if (val & PCI_EXP_LNKSTA_LBMS) {
-		current_link_width = FIELD_GET(PCI_EXP_LNKSTA_NLW, val);
+		current_link_width = (val & PCI_EXP_LNKSTA_NLW) >>
+				     PCI_EXP_LNKSTA_NLW_SHIFT;
 		if (pcie->init_link_width > current_link_width) {
 			dev_warn(pci->dev, "PCIe link is bad, width reduced\n");
 			val = dw_pcie_readw_dbi(pci, pcie->pcie_cap_base +
@@ -345,14 +345,15 @@ static irqreturn_t tegra_pcie_rp_irq_handler(struct tegra_pcie_dw *pcie)
 {
 	struct dw_pcie *pci = &pcie->pci;
 	struct pcie_port *pp = &pci->pp;
-	u32 val, status_l0, status_l1;
+	u32 val, tmp;
 	u16 val_w;
 
-	status_l0 = appl_readl(pcie, APPL_INTR_STATUS_L0);
-	if (status_l0 & APPL_INTR_STATUS_L0_LINK_STATE_INT) {
-		status_l1 = appl_readl(pcie, APPL_INTR_STATUS_L1_0_0);
-		appl_writel(pcie, status_l1, APPL_INTR_STATUS_L1_0_0);
-		if (status_l1 & APPL_INTR_STATUS_L1_0_0_LINK_REQ_RST_NOT_CHGED) {
+	val = appl_readl(pcie, APPL_INTR_STATUS_L0);
+	if (val & APPL_INTR_STATUS_L0_LINK_STATE_INT) {
+		val = appl_readl(pcie, APPL_INTR_STATUS_L1_0_0);
+		if (val & APPL_INTR_STATUS_L1_0_0_LINK_REQ_RST_NOT_CHGED) {
+			appl_writel(pcie, val, APPL_INTR_STATUS_L1_0_0);
+
 			/* SBR & Surprise Link Down WAR */
 			val = appl_readl(pcie, APPL_CAR_RESET_OVRD);
 			val &= ~APPL_CAR_RESET_OVRD_CYA_OVERRIDE_CORE_RST_N;
@@ -368,15 +369,15 @@ static irqreturn_t tegra_pcie_rp_irq_handler(struct tegra_pcie_dw *pcie)
 		}
 	}
 
-	if (status_l0 & APPL_INTR_STATUS_L0_INT_INT) {
-		status_l1 = appl_readl(pcie, APPL_INTR_STATUS_L1_8_0);
-		if (status_l1 & APPL_INTR_STATUS_L1_8_0_AUTO_BW_INT_STS) {
+	if (val & APPL_INTR_STATUS_L0_INT_INT) {
+		val = appl_readl(pcie, APPL_INTR_STATUS_L1_8_0);
+		if (val & APPL_INTR_STATUS_L1_8_0_AUTO_BW_INT_STS) {
 			appl_writel(pcie,
 				    APPL_INTR_STATUS_L1_8_0_AUTO_BW_INT_STS,
 				    APPL_INTR_STATUS_L1_8_0);
 			apply_bad_link_workaround(pp);
 		}
-		if (status_l1 & APPL_INTR_STATUS_L1_8_0_BW_MGT_INT_STS) {
+		if (val & APPL_INTR_STATUS_L1_8_0_BW_MGT_INT_STS) {
 			appl_writel(pcie,
 				    APPL_INTR_STATUS_L1_8_0_BW_MGT_INT_STS,
 				    APPL_INTR_STATUS_L1_8_0);
@@ -388,24 +389,25 @@ static irqreturn_t tegra_pcie_rp_irq_handler(struct tegra_pcie_dw *pcie)
 		}
 	}
 
-	if (status_l0 & APPL_INTR_STATUS_L0_CDM_REG_CHK_INT) {
-		status_l1 = appl_readl(pcie, APPL_INTR_STATUS_L1_18);
-		val = dw_pcie_readl_dbi(pci, PCIE_PL_CHK_REG_CONTROL_STATUS);
-		if (status_l1 & APPL_INTR_STATUS_L1_18_CDM_REG_CHK_CMPLT) {
+	val = appl_readl(pcie, APPL_INTR_STATUS_L0);
+	if (val & APPL_INTR_STATUS_L0_CDM_REG_CHK_INT) {
+		val = appl_readl(pcie, APPL_INTR_STATUS_L1_18);
+		tmp = dw_pcie_readl_dbi(pci, PCIE_PL_CHK_REG_CONTROL_STATUS);
+		if (val & APPL_INTR_STATUS_L1_18_CDM_REG_CHK_CMPLT) {
 			dev_info(pci->dev, "CDM check complete\n");
-			val |= PCIE_PL_CHK_REG_CHK_REG_COMPLETE;
+			tmp |= PCIE_PL_CHK_REG_CHK_REG_COMPLETE;
 		}
-		if (status_l1 & APPL_INTR_STATUS_L1_18_CDM_REG_CHK_CMP_ERR) {
+		if (val & APPL_INTR_STATUS_L1_18_CDM_REG_CHK_CMP_ERR) {
 			dev_err(pci->dev, "CDM comparison mismatch\n");
-			val |= PCIE_PL_CHK_REG_CHK_REG_COMPARISON_ERROR;
+			tmp |= PCIE_PL_CHK_REG_CHK_REG_COMPARISON_ERROR;
 		}
-		if (status_l1 & APPL_INTR_STATUS_L1_18_CDM_REG_CHK_LOGIC_ERR) {
+		if (val & APPL_INTR_STATUS_L1_18_CDM_REG_CHK_LOGIC_ERR) {
 			dev_err(pci->dev, "CDM Logic error\n");
-			val |= PCIE_PL_CHK_REG_CHK_REG_LOGIC_ERROR;
+			tmp |= PCIE_PL_CHK_REG_CHK_REG_LOGIC_ERROR;
 		}
-		dw_pcie_writel_dbi(pci, PCIE_PL_CHK_REG_CONTROL_STATUS, val);
-		val = dw_pcie_readl_dbi(pci, PCIE_PL_CHK_REG_ERR_ADDR);
-		dev_err(pci->dev, "CDM Error Address Offset = 0x%08X\n", val);
+		dw_pcie_writel_dbi(pci, PCIE_PL_CHK_REG_CONTROL_STATUS, tmp);
+		tmp = dw_pcie_readl_dbi(pci, PCIE_PL_CHK_REG_ERR_ADDR);
+		dev_err(pci->dev, "CDM Error Address Offset = 0x%08X\n", tmp);
 	}
 
 	return IRQ_HANDLED;
@@ -596,7 +598,8 @@ static void tegra_pcie_enable_system_interrupts(struct pcie_port *pp)
 
 	val_w = dw_pcie_readw_dbi(&pcie->pci, pcie->pcie_cap_base +
 				  PCI_EXP_LNKSTA);
-	pcie->init_link_width = FIELD_GET(PCI_EXP_LNKSTA_NLW, val_w);
+	pcie->init_link_width = (val_w & PCI_EXP_LNKSTA_NLW) >>
+				PCI_EXP_LNKSTA_NLW_SHIFT;
 
 	val_w = dw_pcie_readw_dbi(&pcie->pci, pcie->pcie_cap_base +
 				  PCI_EXP_LNKCTL);
@@ -772,7 +775,7 @@ static void tegra_pcie_prepare_host(struct pcie_port *pp)
 	/* Configure Max lane width from DT */
 	val = dw_pcie_readl_dbi(pci, pcie->pcie_cap_base + PCI_EXP_LNKCAP);
 	val &= ~PCI_EXP_LNKCAP_MLW;
-	val |= FIELD_PREP(PCI_EXP_LNKCAP_MLW, pcie->num_lanes);
+	val |= (pcie->num_lanes << PCI_EXP_LNKSTA_NLW_SHIFT);
 	dw_pcie_writel_dbi(pci, pcie->pcie_cap_base + PCI_EXP_LNKCAP, val);
 
 	config_gen3_gen4_eq_presets(pcie);
@@ -853,7 +856,7 @@ static int tegra_pcie_dw_host_init(struct pcie_port *pp)
 		offset = dw_pcie_find_ext_capability(pci, PCI_EXT_CAP_ID_DLF);
 		val = dw_pcie_readl_dbi(pci, offset + PCI_DLF_CAP);
 		val &= ~PCI_DLF_EXCHANGE_ENABLE;
-		dw_pcie_writel_dbi(pci, offset + PCI_DLF_CAP, val);
+		dw_pcie_writel_dbi(pci, offset, val);
 
 		tegra_pcie_prepare_host(pp);
 

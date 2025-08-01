@@ -48,6 +48,7 @@ static const char * const sym_regex_kernel[S_NSYMTYPES] = {
 	"^(xen_irq_disable_direct_reloc$|"
 	"xen_save_fl_direct_reloc$|"
 	"VDSO|"
+	"__typeid__|"
 	"__crc_)",
 
 /*
@@ -78,6 +79,8 @@ static const char * const sym_regex_kernel[S_NSYMTYPES] = {
 	"__end_rodata_hpage_align|"
 #endif
 	"__vvar_page|"
+	"_etext|"
+	"__end_of_kernel_reserve|"
 	"_end)$"
 };
 
@@ -596,14 +599,6 @@ static void print_absolute_relocs(void)
 		if (!(sec_applies->shdr.sh_flags & SHF_ALLOC)) {
 			continue;
 		}
-		/*
-		 * Do not perform relocations in .notes section; any
-		 * values there are meant for pre-boot consumption (e.g.
-		 * startup_xen).
-		 */
-		if (sec_applies->shdr.sh_type == SHT_NOTE) {
-			continue;
-		}
 		sh_symtab  = sec_symtab->symtab;
 		sym_strtab = sec_symtab->link->strtab;
 		for (j = 0; j < sec->shdr.sh_size/sizeof(Elf_Rel); j++) {
@@ -689,15 +684,6 @@ static void walk_relocs(int (*process)(struct section *sec, Elf_Rel *rel,
 		if (!(sec_applies->shdr.sh_flags & SHF_ALLOC)) {
 			continue;
 		}
-
-		/*
-		 * Do not perform relocations in .notes sections; any
-		 * values there are meant for pre-boot consumption (e.g.
-		 * startup_xen).
-		 */
-		if (sec_applies->shdr.sh_type == SHT_NOTE)
-			continue;
-
 		sh_symtab = sec_symtab->symtab;
 		sym_strtab = sec_symtab->link->strtab;
 		for (j = 0; j < sec->shdr.sh_size/sizeof(Elf_Rel); j++) {
@@ -823,6 +809,12 @@ static int do_reloc64(struct section *sec, Elf_Rel *rel, ElfW(Sym) *sym,
 		if (is_percpu_sym(sym, symname))
 			die("Invalid R_X86_64_PC64 relocation against per-CPU symbol %s\n",
 			    symname);
+		break;
+
+	case R_X86_64_8:
+		if (!shn_abs || !is_reloc(S_ABS, symname))
+			die("Non-whitelisted %s relocation: %s\n",
+				rel_type(r_type), symname);
 		break;
 
 	case R_X86_64_32:

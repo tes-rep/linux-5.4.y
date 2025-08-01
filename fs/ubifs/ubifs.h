@@ -1593,13 +1593,8 @@ static inline int ubifs_check_hmac(const struct ubifs_info *c,
 	return crypto_memneq(expected, got, c->hmac_desc_len);
 }
 
-#ifdef CONFIG_UBIFS_FS_AUTHENTICATION
 void ubifs_bad_hash(const struct ubifs_info *c, const void *node,
 		    const u8 *hash, int lnum, int offs);
-#else
-static inline void ubifs_bad_hash(const struct ubifs_info *c, const void *node,
-				  const u8 *hash, int lnum, int offs) {};
-#endif
 
 int __ubifs_node_check_hash(const struct ubifs_info *c, const void *buf,
 			  const u8 *expected);
@@ -2101,13 +2096,6 @@ int ubifs_decrypt(const struct inode *inode, struct ubifs_data_node *dn,
 #endif
 
 extern const struct fscrypt_operations ubifs_crypt_operations;
-
-static inline bool ubifs_crypt_is_encrypted(const struct inode *inode)
-{
-	const struct ubifs_inode *ui = ubifs_inode(inode);
-
-	return ui->flags & UBIFS_CRYPT_FL;
-}
 
 /* Normal UBIFS messages */
 __printf(2, 3)

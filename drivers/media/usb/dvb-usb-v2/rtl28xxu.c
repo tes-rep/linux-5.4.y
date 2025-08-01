@@ -176,10 +176,6 @@ static int rtl28xxu_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 			ret = -EOPNOTSUPP;
 			goto err_mutex_unlock;
 		} else if (msg[0].addr == 0x10) {
-			if (msg[0].len < 1 || msg[1].len < 1) {
-				ret = -EOPNOTSUPP;
-				goto err_mutex_unlock;
-			}
 			/* method 1 - integrated demod */
 			if (msg[0].buf[0] == 0x00) {
 				/* return demod page from driver cache */
@@ -193,10 +189,6 @@ static int rtl28xxu_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 				ret = rtl28xxu_ctrl_msg(d, &req);
 			}
 		} else if (msg[0].len < 2) {
-			if (msg[0].len < 1) {
-				ret = -EOPNOTSUPP;
-				goto err_mutex_unlock;
-			}
 			/* method 2 - old I2C */
 			req.value = (msg[0].buf[0] << 8) | (msg[0].addr << 1);
 			req.index = CMD_I2C_RD;
@@ -225,16 +217,8 @@ static int rtl28xxu_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 			ret = -EOPNOTSUPP;
 			goto err_mutex_unlock;
 		} else if (msg[0].addr == 0x10) {
-			if (msg[0].len < 1) {
-				ret = -EOPNOTSUPP;
-				goto err_mutex_unlock;
-			}
 			/* method 1 - integrated demod */
 			if (msg[0].buf[0] == 0x00) {
-				if (msg[0].len < 2) {
-					ret = -EOPNOTSUPP;
-					goto err_mutex_unlock;
-				}
 				/* save demod page for later demod access */
 				dev->page = msg[0].buf[1];
 				ret = 0;
@@ -247,10 +231,6 @@ static int rtl28xxu_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 				ret = rtl28xxu_ctrl_msg(d, &req);
 			}
 		} else if ((msg[0].len < 23) && (!dev->new_i2c_write)) {
-			if (msg[0].len < 1) {
-				ret = -EOPNOTSUPP;
-				goto err_mutex_unlock;
-			}
 			/* method 2 - old I2C */
 			req.value = (msg[0].buf[0] << 8) | (msg[0].addr << 1);
 			req.index = CMD_I2C_WR;
@@ -1810,6 +1790,7 @@ static int rtl2832u_rc_query(struct dvb_usb_device *d)
 	}
 
 	/* 'flush' ir_raw_event_store_with_filter() */
+	ir_raw_event_set_idle(d->rc_dev, true);
 	ir_raw_event_handle(d->rc_dev);
 exit:
 	return ret;
@@ -1832,8 +1813,6 @@ static int rtl2832u_get_rc_config(struct dvb_usb_device *d,
 	rc->driver_type = RC_DRIVER_IR_RAW;
 	rc->query = rtl2832u_rc_query;
 	rc->interval = 200;
-	/* we program idle len to 0xc0, set timeout to one less */
-	rc->timeout = 0xbf * 50800;
 
 	return 0;
 }
@@ -1987,8 +1966,7 @@ static const struct usb_device_id rtl28xxu_id_table[] = {
 
 	/* RTL2832P devices: */
 	{ DVB_USB_DEVICE(USB_VID_HANFTEK, 0x0131,
-		&rtl28xxu_props, "Astrometa DVB-T2",
-		RC_MAP_ASTROMETA_T2HYBRID) },
+		&rtl28xxu_props, "Astrometa DVB-T2", NULL) },
 	{ DVB_USB_DEVICE(0x5654, 0xca42,
 		&rtl28xxu_props, "GoTView MasterHD 3", NULL) },
 	{ }

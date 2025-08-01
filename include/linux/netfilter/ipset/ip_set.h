@@ -14,6 +14,7 @@
 #include <linux/netfilter/x_tables.h>
 #include <linux/stringify.h>
 #include <linux/vmalloc.h>
+#include <linux/android_kabi.h>
 #include <net/netlink.h>
 #include <uapi/linux/netfilter/ipset/ip_set.h>
 
@@ -98,7 +99,7 @@ struct ip_set_counter {
 
 struct ip_set_comment_rcu {
 	struct rcu_head rcu;
-	char str[];
+	char str[0];
 };
 
 struct ip_set_comment {
@@ -188,10 +189,10 @@ struct ip_set_type_variant {
 	/* Return true if "b" set is the same as "a"
 	 * according to the create set parameters */
 	bool (*same_set)(const struct ip_set *a, const struct ip_set *b);
-	/* Cancel ongoing garbage collectors before destroying the set*/
-	void (*cancel_gc)(struct ip_set *set);
 	/* Region-locking is used */
 	bool region_lock;
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 struct ip_set_region {
@@ -230,6 +231,8 @@ struct ip_set_type {
 
 	/* Set this to THIS_MODULE if you are a module, otherwise NULL */
 	struct module *me;
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 /* register and unregister set type */
@@ -238,8 +241,6 @@ extern void ip_set_type_unregister(struct ip_set_type *set_type);
 
 /* A generic IP set */
 struct ip_set {
-	/* For call_cru in destroy */
-	struct rcu_head rcu;
 	/* The name of the set */
 	char name[IPSET_MAXNAMELEN];
 	/* Lock protecting the set data */
@@ -274,6 +275,8 @@ struct ip_set {
 	size_t offset[IPSET_EXT_ID_MAX];
 	/* The type specific data */
 	void *data;
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 static inline void

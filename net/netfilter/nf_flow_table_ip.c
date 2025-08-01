@@ -12,7 +12,6 @@
 #include <net/ip6_route.h>
 #include <net/neighbour.h>
 #include <net/netfilter/nf_flow_table.h>
-
 /* For layer 4 checksum field offset. */
 #include <linux/tcp.h>
 #include <linux/udp.h>
@@ -216,6 +215,14 @@ static bool nf_flow_exceeds_mtu(const struct sk_buff *skb, unsigned int mtu)
 	return true;
 }
 
+static int nf_flow_offload_dst_check(struct dst_entry *dst)
+{
+	if (unlikely(dst_xfrm(dst)))
+		return dst_check(dst, 0) ? 0 : -1;
+
+	return 0;
+}
+
 static unsigned int nf_flow_xmit_xfrm(struct sk_buff *skb,
 				      const struct nf_hook_state *state,
 				      struct dst_entry *dst)
@@ -266,7 +273,7 @@ nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 	if (nf_flow_state_check(flow, ip_hdr(skb)->protocol, skb, thoff))
 		return NF_ACCEPT;
 
-	if (!dst_check(&rt->dst, 0)) {
+	if (nf_flow_offload_dst_check(&rt->dst)) {
 		flow_offload_teardown(flow);
 		return NF_ACCEPT;
 	}
@@ -289,7 +296,6 @@ nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 	skb->dev = outdev;
 	nexthop = rt_nexthop(rt, flow->tuplehash[!dir].tuple.src_v4.s_addr);
 	skb_dst_set_noref(skb, &rt->dst);
-	nf_flow_table_acct(flow, skb, dir);
 	neigh_xmit(NEIGH_ARP_TABLE, outdev, &nexthop, skb);
 
 	return NF_STOLEN;
@@ -494,7 +500,7 @@ nf_flow_offload_ipv6_hook(void *priv, struct sk_buff *skb,
 				sizeof(*ip6h)))
 		return NF_ACCEPT;
 
-	if (!dst_check(&rt->dst, tuplehash->tuple.dst_cookie)) {
+	if (nf_flow_offload_dst_check(&rt->dst)) {
 		flow_offload_teardown(flow);
 		return NF_ACCEPT;
 	}
@@ -520,7 +526,6 @@ nf_flow_offload_ipv6_hook(void *priv, struct sk_buff *skb,
 	skb->dev = outdev;
 	nexthop = rt6_nexthop(rt, &flow->tuplehash[!dir].tuple.src_v6);
 	skb_dst_set_noref(skb, &rt->dst);
-	nf_flow_table_acct(flow, skb, dir);
 	neigh_xmit(NEIGH_ND_TABLE, outdev, nexthop, skb);
 
 	return NF_STOLEN;

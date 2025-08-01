@@ -11,8 +11,6 @@ menuconfig CRYPTO_HW
 
 if CRYPTO_HW
 
-source "drivers/crypto/allwinner/Kconfig"
-
 config CRYPTO_DEV_PADLOCK
 	tristate "Support for VIA PadLock ACE"
 	depends on X86 && !UML
@@ -722,8 +720,6 @@ source "drivers/crypto/chelsio/Kconfig"
 
 source "drivers/crypto/virtio/Kconfig"
 
-source "drivers/crypto/cryptodev-linux/Kconfig"
-
 config CRYPTO_DEV_BCM_SPU
 	tristate "Broadcom symmetric crypto/hash acceleration support"
 	depends on ARCH_BCM_IPROC
@@ -811,7 +807,5 @@ config CRYPTO_DEV_CCREE
 	  If unsure say Y.
 
 source "drivers/crypto/hisilicon/Kconfig"
-
-source "drivers/crypto/amlogic/Kconfig"
 
 endif # CRYPTO_HW

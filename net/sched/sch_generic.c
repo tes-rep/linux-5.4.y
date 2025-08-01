@@ -32,7 +32,7 @@
 #include <net/xfrm.h>
 
 /* Qdisc to use by default */
-const struct Qdisc_ops *default_qdisc_ops = &fq_codel_qdisc_ops;
+const struct Qdisc_ops *default_qdisc_ops = &pfifo_fast_ops;
 EXPORT_SYMBOL(default_qdisc_ops);
 
 static void qdisc_maybe_clear_missed(struct Qdisc *q,
@@ -403,7 +403,7 @@ static inline bool qdisc_restart(struct Qdisc *q, int *packets)
 
 void __qdisc_run(struct Qdisc *q)
 {
-	int quota = READ_ONCE(dev_tx_weight);
+	int quota = dev_tx_weight;
 	int packets;
 
 	while (qdisc_restart(q, &packets)) {
@@ -619,6 +619,230 @@ struct Qdisc_ops noqueue_qdisc_ops __read_mostly = {
 	.peek		=	noop_dequeue,
 	.owner		=	THIS_MODULE,
 };
+
+static const u8 prio2band[TC_PRIO_MAX + 1] = {
+	1, 2, 2, 2, 1, 2, 0, 0 , 1, 1, 1, 1, 1, 1, 1, 1
+};
+
+/* 3-band FIFO queue: old style, but should be a bit faster than
+   generic prio+fifo combination.
+ */
+
+#define PFIFO_FAST_BANDS 3
+
+/*
+ * Private data for a pfifo_fast scheduler containing:
+ *	- rings for priority bands
+ */
+struct pfifo_fast_priv {
+	struct skb_array q[PFIFO_FAST_BANDS];
+};
+
+static inline struct skb_array *band2list(struct pfifo_fast_priv *priv,
+					  int band)
+{
+	return &priv->q[band];
+}
+
+static int pfifo_fast_enqueue(struct sk_buff *skb, struct Qdisc *qdisc,
+			      struct sk_buff **to_free)
+{
+	int band = prio2band[skb->priority & TC_PRIO_MAX];
+	struct pfifo_fast_priv *priv = qdisc_priv(qdisc);
+	struct skb_array *q = band2list(priv, band);
+	unsigned int pkt_len = qdisc_pkt_len(skb);
+	int err;
+
+	err = skb_array_produce(q, skb);
+
+	if (unlikely(err)) {
+		if (qdisc_is_percpu_stats(qdisc))
+			return qdisc_drop_cpu(skb, qdisc, to_free);
+		else
+			return qdisc_drop(skb, qdisc, to_free);
+	}
+
+	qdisc_update_stats_at_enqueue(qdisc, pkt_len);
+	return NET_XMIT_SUCCESS;
+}
+
+static struct sk_buff *pfifo_fast_dequeue(struct Qdisc *qdisc)
+{
+	struct pfifo_fast_priv *priv = qdisc_priv(qdisc);
+	struct sk_buff *skb = NULL;
+	bool need_retry = true;
+	int band;
+
+retry:
+	for (band = 0; band < PFIFO_FAST_BANDS && !skb; band++) {
+		struct skb_array *q = band2list(priv, band);
+
+		if (__skb_array_empty(q))
+			continue;
+
+		skb = __skb_array_consume(q);
+	}
+	if (likely(skb)) {
+		qdisc_update_stats_at_dequeue(qdisc, skb);
+	} else if (need_retry &&
+		   test_bit(__QDISC_STATE_MISSED, &qdisc->state)) {
+		/* Delay clearing the STATE_MISSED here to reduce
+		 * the overhead of the second spin_trylock() in
+		 * qdisc_run_begin() and __netif_schedule() calling
+		 * in qdisc_run_end().
+		 */
+		clear_bit(__QDISC_STATE_MISSED, &qdisc->state);
+
+		/* Make sure dequeuing happens after clearing
+		 * STATE_MISSED.
+		 */
+		smp_mb__after_atomic();
+
+		need_retry = false;
+
+		goto retry;
+	} else {
+		WRITE_ONCE(qdisc->empty, true);
+	}
+
+	return skb;
+}
+
+static struct sk_buff *pfifo_fast_peek(struct Qdisc *qdisc)
+{
+	struct pfifo_fast_priv *priv = qdisc_priv(qdisc);
+	struct sk_buff *skb = NULL;
+	int band;
+
+	for (band = 0; band < PFIFO_FAST_BANDS && !skb; band++) {
+		struct skb_array *q = band2list(priv, band);
+
+		skb = __skb_array_peek(q);
+	}
+
+	return skb;
+}
+
+static void pfifo_fast_reset(struct Qdisc *qdisc)
+{
+	int i, band;
+	struct pfifo_fast_priv *priv = qdisc_priv(qdisc);
+
+	for (band = 0; band < PFIFO_FAST_BANDS; band++) {
+		struct skb_array *q = band2list(priv, band);
+		struct sk_buff *skb;
+
+		/* NULL ring is possible if destroy path is due to a failed
+		 * skb_array_init() in pfifo_fast_init() case.
+		 */
+		if (!q->ring.queue)
+			continue;
+
+		while ((skb = __skb_array_consume(q)) != NULL)
+			kfree_skb(skb);
+	}
+
+	if (qdisc_is_percpu_stats(qdisc)) {
+		for_each_possible_cpu(i) {
+			struct gnet_stats_queue *q;
+
+			q = per_cpu_ptr(qdisc->cpu_qstats, i);
+			q->backlog = 0;
+			q->qlen = 0;
+		}
+	}
+}
+
+static int pfifo_fast_dump(struct Qdisc *qdisc, struct sk_buff *skb)
+{
+	struct tc_prio_qopt opt = { .bands = PFIFO_FAST_BANDS };
+
+	memcpy(&opt.priomap, prio2band, TC_PRIO_MAX + 1);
+	if (nla_put(skb, TCA_OPTIONS, sizeof(opt), &opt))
+		goto nla_put_failure;
+	return skb->len;
+
+nla_put_failure:
+	return -1;
+}
+
+static int pfifo_fast_init(struct Qdisc *qdisc, struct nlattr *opt,
+			   struct netlink_ext_ack *extack)
+{
+	unsigned int qlen = qdisc_dev(qdisc)->tx_queue_len;
+	struct pfifo_fast_priv *priv = qdisc_priv(qdisc);
+	int prio;
+
+	/* guard against zero length rings */
+	if (!qlen)
+		return -EINVAL;
+
+	for (prio = 0; prio < PFIFO_FAST_BANDS; prio++) {
+		struct skb_array *q = band2list(priv, prio);
+		int err;
+
+		err = skb_array_init(q, qlen, GFP_KERNEL);
+		if (err)
+			return -ENOMEM;
+	}
+
+	/* Can by-pass the queue discipline */
+	qdisc->flags |= TCQ_F_CAN_BYPASS;
+	return 0;
+}
+
+static void pfifo_fast_destroy(struct Qdisc *sch)
+{
+	struct pfifo_fast_priv *priv = qdisc_priv(sch);
+	int prio;
+
+	for (prio = 0; prio < PFIFO_FAST_BANDS; prio++) {
+		struct skb_array *q = band2list(priv, prio);
+
+		/* NULL ring is possible if destroy path is due to a failed
+		 * skb_array_init() in pfifo_fast_init() case.
+		 */
+		if (!q->ring.queue)
+			continue;
+		/* Destroy ring but no need to kfree_skb because a call to
+		 * pfifo_fast_reset() has already done that work.
+		 */
+		ptr_ring_cleanup(&q->ring, NULL);
+	}
+}
+
+static int pfifo_fast_change_tx_queue_len(struct Qdisc *sch,
+					  unsigned int new_len)
+{
+	struct pfifo_fast_priv *priv = qdisc_priv(sch);
+	struct skb_array *bands[PFIFO_FAST_BANDS];
+	int prio;
+
+	for (prio = 0; prio < PFIFO_FAST_BANDS; prio++) {
+		struct skb_array *q = band2list(priv, prio);
+
+		bands[prio] = q;
+	}
+
+	return skb_array_resize_multiple(bands, PFIFO_FAST_BANDS, new_len,
+					 GFP_KERNEL);
+}
+
+struct Qdisc_ops pfifo_fast_ops __read_mostly = {
+	.id		=	"pfifo_fast",
+	.priv_size	=	sizeof(struct pfifo_fast_priv),
+	.enqueue	=	pfifo_fast_enqueue,
+	.dequeue	=	pfifo_fast_dequeue,
+	.peek		=	pfifo_fast_peek,
+	.init		=	pfifo_fast_init,
+	.destroy	=	pfifo_fast_destroy,
+	.reset		=	pfifo_fast_reset,
+	.dump		=	pfifo_fast_dump,
+	.change_tx_queue_len =  pfifo_fast_change_tx_queue_len,
+	.owner		=	THIS_MODULE,
+	.static_flags	=	TCQ_F_NOLOCK | TCQ_F_CPUSTATS,
+};
+EXPORT_SYMBOL(pfifo_fast_ops);
 
 struct Qdisc *qdisc_alloc(struct netdev_queue *dev_queue,
 			  const struct Qdisc_ops *ops,
@@ -855,12 +1079,12 @@ static void attach_one_default_qdisc(struct net_device *dev,
 				     void *_unused)
 {
 	struct Qdisc *qdisc;
-	const struct Qdisc_ops *ops = &fq_codel_qdisc_ops;
+	const struct Qdisc_ops *ops = default_qdisc_ops;
 
 	if (dev->priv_flags & IFF_NO_QUEUE)
 		ops = &noqueue_qdisc_ops;
 	else if(dev->type == ARPHRD_CAN)
-		ops = &fq_codel_qdisc_ops;
+		ops = &pfifo_fast_ops;
 
 	qdisc = qdisc_create_dflt(dev_queue, ops, TC_H_ROOT, NULL);
 	if (!qdisc) {
@@ -882,21 +1106,18 @@ static void attach_default_qdiscs(struct net_device *dev)
 	if (!netif_is_multiqueue(dev) ||
 	    dev->priv_flags & IFF_NO_QUEUE) {
 		netdev_for_each_tx_queue(dev, attach_one_default_qdisc, NULL);
-		qdisc = txq->qdisc_sleeping;
-		rcu_assign_pointer(dev->qdisc, qdisc);
-		qdisc_refcount_inc(qdisc);
+		dev->qdisc = txq->qdisc_sleeping;
+		qdisc_refcount_inc(dev->qdisc);
 	} else {
 		qdisc = qdisc_create_dflt(txq, &mq_qdisc_ops, TC_H_ROOT, NULL);
 		if (qdisc) {
-			rcu_assign_pointer(dev->qdisc, qdisc);
+			dev->qdisc = qdisc;
 			qdisc->ops->attach(qdisc);
 		}
 	}
-	qdisc = rtnl_dereference(dev->qdisc);
-
 #ifdef CONFIG_NET_SCHED
-	if (qdisc != &noop_qdisc)
-		qdisc_hash_add(qdisc, false);
+	if (dev->qdisc != &noop_qdisc)
+		qdisc_hash_add(dev->qdisc, false);
 #endif
 }
 
@@ -926,7 +1147,7 @@ void dev_activate(struct net_device *dev)
 	 * and noqueue_qdisc for virtual interfaces
 	 */
 
-	if (rtnl_dereference(dev->qdisc) == &noop_qdisc)
+	if (dev->qdisc == &noop_qdisc)
 		attach_default_qdiscs(dev);
 
 	if (!netif_carrier_ok(dev))
@@ -1092,15 +1313,6 @@ static int qdisc_change_tx_queue_len(struct net_device *dev,
 	return 0;
 }
 
-void dev_qdisc_change_real_num_tx(struct net_device *dev,
-				  unsigned int new_real_tx)
-{
-	struct Qdisc *qdisc = rtnl_dereference(dev->qdisc);
-
-	if (qdisc->ops->change_real_num_tx)
-		qdisc->ops->change_real_num_tx(qdisc, new_real_tx);
-}
-
 int dev_qdisc_change_tx_queue_len(struct net_device *dev)
 {
 	bool up = dev->flags & IFF_UP;
@@ -1135,7 +1347,7 @@ static void dev_init_scheduler_queue(struct net_device *dev,
 
 void dev_init_scheduler(struct net_device *dev)
 {
-	rcu_assign_pointer(dev->qdisc, &noop_qdisc);
+	dev->qdisc = &noop_qdisc;
 	netdev_for_each_tx_queue(dev, dev_init_scheduler_queue, &noop_qdisc);
 	if (dev_ingress_queue(dev))
 		dev_init_scheduler_queue(dev, dev_ingress_queue(dev), &noop_qdisc);
@@ -1163,8 +1375,8 @@ void dev_shutdown(struct net_device *dev)
 	netdev_for_each_tx_queue(dev, shutdown_scheduler_queue, &noop_qdisc);
 	if (dev_ingress_queue(dev))
 		shutdown_scheduler_queue(dev, dev_ingress_queue(dev), &noop_qdisc);
-	qdisc_put(rtnl_dereference(dev->qdisc));
-	rcu_assign_pointer(dev->qdisc, &noop_qdisc);
+	qdisc_put(dev->qdisc);
+	dev->qdisc = &noop_qdisc;
 
 	WARN_ON(timer_pending(&dev->watchdog_timer));
 }

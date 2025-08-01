@@ -10,16 +10,6 @@ config RTC_MC146818_LIB
 	bool
 	select RTC_LIB
 
-config RTC_LIB_KUNIT_TEST
-	tristate "KUnit test for RTC lib functions" if !KUNIT_ALL_TESTS
-	depends on KUNIT
-	default KUNIT_ALL_TESTS
-	select RTC_LIB
-	help
-	  Enable this option to test RTC library functions.
-
-	  If unsure, say N.
-
 menuconfig RTC_CLASS
 	bool "Real Time Clock"
 	default n
@@ -319,6 +309,10 @@ config RTC_DRV_HYM8563
 	  This driver can also be built as a module. If so, the module
 	  will be called rtc-hym8563.
 
+config RTC_DRV_HYM8563_SHW_PATCH
+	bool "Apply Shiningworth patch"
+	depends on RTC_DRV_HYM8563
+
 config RTC_DRV_LP8788
 	tristate "TI LP8788 RTC driver"
 	depends on MFD_LP8788
@@ -388,7 +382,7 @@ config RTC_DRV_MAX77686
 config RTC_DRV_MESON_VRTC
 	tristate "Amlogic Meson Virtual RTC"
 	depends on ARCH_MESON || COMPILE_TEST
-	default m if ARCH_MESON
+	default n
 	help
 	  If you say yes here you will get support for the
 	  Virtual RTC of Amlogic SoCs.
@@ -1821,8 +1815,7 @@ config RTC_DRV_MOXART
 
 config RTC_DRV_MT6397
 	tristate "MediaTek PMIC based RTC"
-	depends on MFD_MT6397 || COMPILE_TEST
-	select IRQ_DOMAIN
+	depends on MFD_MT6397 || (COMPILE_TEST && IRQ_DOMAIN)
 	help
 	  This selects the MediaTek(R) RTC driver. RTC is part of MediaTek
 	  MT6397 PMIC. You should enable MT6397 PMIC MFD before select

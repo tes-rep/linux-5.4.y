@@ -345,19 +345,6 @@ config HW_RANDOM_STM32
 
 	  If unsure, say N.
 
-config HW_RANDOM_ROCKCHIP
-	tristate "Rockchip Random Number Generator support"
-	depends on ARCH_ROCKCHIP
-	default HW_RANDOM
-	help
-	  This driver provides kernel-side support for the Random Number
-	  Generator hardware found on Rockchip cpus.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called rockchip-rng.
-
-	  If unsure, say Y.
-
 config HW_RANDOM_PIC32
 	tristate "Microchip PIC32 Random Number Generator support"
 	depends on HW_RANDOM && MACH_PIC32
@@ -375,7 +362,7 @@ config HW_RANDOM_MESON
 	tristate "Amlogic Meson Random Number Generator support"
 	depends on HW_RANDOM
 	depends on ARCH_MESON || COMPILE_TEST
-	default y
+	default n
 	---help---
 	  This driver provides kernel-side support for the Random Number
 	  Generator hardware found on Amlogic Meson SoCs.

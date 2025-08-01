@@ -54,6 +54,7 @@ struct pwm_voltages {
 static void pwm_regulator_init_state(struct regulator_dev *rdev)
 {
 	struct pwm_regulator_data *drvdata = rdev_get_drvdata(rdev);
+#ifndef CONFIG_AMLOGIC_MODIFY
 	struct pwm_state pwm_state;
 	unsigned int dutycycle;
 	int i;
@@ -67,6 +68,9 @@ static void pwm_regulator_init_state(struct regulator_dev *rdev)
 			return;
 		}
 	}
+#else
+	drvdata->state = 0;
+#endif
 }
 
 static int pwm_regulator_get_voltage_sel(struct regulator_dev *rdev)
@@ -158,9 +162,6 @@ static int pwm_regulator_get_voltage(struct regulator_dev *rdev)
 	pwm_get_state(drvdata->pwm, &pstate);
 
 	voltage = pwm_get_relative_duty_cycle(&pstate, duty_unit);
-	if (voltage < min(max_uV_duty, min_uV_duty) ||
-	    voltage > max(max_uV_duty, min_uV_duty))
-		return -ENOTRECOVERABLE;
 
 	/*
 	 * The dutycycle for min_uV might be greater than the one for max_uV.
@@ -372,11 +373,11 @@ static int pwm_regulator_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to get enable GPIO: %d\n", ret);
 		return ret;
 	}
-
+#ifndef CONFIG_AMLOGIC_MODIFY
 	ret = pwm_adjust_config(drvdata->pwm);
 	if (ret)
 		return ret;
-
+#endif
 	regulator = devm_regulator_register(&pdev->dev,
 					    &drvdata->desc, &config);
 	if (IS_ERR(regulator)) {

@@ -521,7 +521,7 @@ void show_stack(struct task_struct *task, unsigned long *sp)
 
 DEFINE_SPINLOCK(die_lock);
 
-void die(const char * str, struct pt_regs * regs, long err)
+void __noreturn die(const char * str, struct pt_regs * regs, long err)
 {
 	static int die_counter;
 
@@ -543,5 +543,5 @@ void die(const char * str, struct pt_regs * regs, long err)
 	if (panic_on_oops)
 		panic("Fatal exception");
 
-	make_task_dead(err);
+	do_exit(err);
 }

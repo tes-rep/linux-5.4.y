@@ -14,7 +14,7 @@
 struct nf_ct_timeout {
 	__u16			l3num;
 	const struct nf_conntrack_l4proto *l4proto;
-	char			data[];
+	char			data[0];
 };
 
 struct ctnl_timeout {
@@ -123,7 +123,5 @@ static inline void nf_ct_destroy_timeout(struct nf_conn *ct)
 extern struct nf_ct_timeout *(*nf_ct_timeout_find_get_hook)(struct net *net, const char *name);
 extern void (*nf_ct_timeout_put_hook)(struct nf_ct_timeout *timeout);
 #endif
-
-extern unsigned int *udp_get_timeouts(struct net *net);
 
 #endif /* _NF_CONNTRACK_TIMEOUT_H */

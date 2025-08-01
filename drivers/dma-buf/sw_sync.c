@@ -191,7 +191,6 @@ static const struct dma_fence_ops timeline_fence_ops = {
  */
 static void sync_timeline_signal(struct sync_timeline *obj, unsigned int inc)
 {
-	LIST_HEAD(signalled);
 	struct sync_pt *pt, *next;
 
 	trace_sync_timeline(obj);
@@ -204,20 +203,21 @@ static void sync_timeline_signal(struct sync_timeline *obj, unsigned int inc)
 		if (!timeline_fence_signaled(&pt->base))
 			break;
 
-		dma_fence_get(&pt->base);
-
-		list_move_tail(&pt->link, &signalled);
+		list_del_init(&pt->link);
 		rb_erase(&pt->node, &obj->pt_tree);
 
+		/*
+		 * A signal callback may release the last reference to this
+		 * fence, causing it to be freed. That operation has to be
+		 * last to avoid a use after free inside this loop, and must
+		 * be after we remove the fence from the timeline in order to
+		 * prevent deadlocking on timeline->lock inside
+		 * timeline_fence_release().
+		 */
 		dma_fence_signal_locked(&pt->base);
 	}
 
 	spin_unlock_irq(&obj->lock);
-
-	list_for_each_entry_safe(pt, next, &signalled, link) {
-		list_del_init(&pt->link);
-		dma_fence_put(&pt->base);
-	}
 }
 
 /**
@@ -410,3 +410,84 @@ const struct file_operations sw_sync_debugfs_fops = {
 	.unlocked_ioctl = sw_sync_ioctl,
 	.compat_ioctl	= sw_sync_ioctl,
 };
+
+#ifdef CONFIG_AMLOGIC_MODIFY_OLD
+/*api for amlogic use.*/
+void *aml_sync_create_timeline(const char *tname)
+{
+	struct sync_timeline *timeline;
+
+	timeline = sync_timeline_create(tname);
+	return (void *)timeline;
+}
+EXPORT_SYMBOL(aml_sync_create_timeline);
+
+int aml_sync_create_fence(void *timeline, unsigned int value)
+{
+	struct sync_timeline *tl = (struct sync_timeline *)timeline;
+	int fd;
+	int err;
+	struct sync_pt *pt;
+	struct sync_file *sync_file;
+
+	if (!tl)
+		return -EPERM;
+
+	fd =  get_unused_fd_flags(O_CLOEXEC);
+	if (fd < 0)
+		return -EBADF;
+
+	pt = sync_pt_create(tl, value);
+	if (!pt) {
+		err = -ENOMEM;
+		goto err;
+	}
+
+	sync_file = sync_file_create(&pt->base);
+	dma_fence_put(&pt->base);
+	if (!sync_file) {
+		err = -ENOMEM;
+		goto err;
+	}
+
+	fd_install(fd, sync_file->file);
+	return fd;
+
+err:
+	put_unused_fd(fd);
+	return err;
+}
+EXPORT_SYMBOL(aml_sync_create_fence);
+
+void aml_sync_inc_timeline(void *timeline, unsigned int value)
+{
+	struct sync_timeline *tl = (struct sync_timeline *)timeline;
+
+	if (!tl)
+		return;
+	sync_timeline_signal(tl, value);
+}
+EXPORT_SYMBOL(aml_sync_inc_timeline);
+
+struct dma_fence *aml_sync_get_fence(int syncfile_fd)
+{
+	return sync_file_get_fence(syncfile_fd);
+}
+EXPORT_SYMBOL(aml_sync_get_fence);
+
+int aml_sync_wait_fence(struct dma_fence *fence, long timeout)
+{
+	long ret;
+
+	ret = dma_fence_wait_timeout(fence, false, timeout);
+	return ret;
+}
+EXPORT_SYMBOL(aml_sync_wait_fence);
+
+void aml_sync_put_fence(struct dma_fence *fence)
+{
+	dma_fence_put(fence);
+}
+EXPORT_SYMBOL(aml_sync_put_fence);
+#endif
+

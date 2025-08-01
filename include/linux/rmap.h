@@ -12,6 +12,8 @@
 #include <linux/memcontrol.h>
 #include <linux/highmem.h>
 
+int isolate_lru_page(struct page *page);
+
 /*
  * The anon_vma heads a list of private "related" vmas, to scan if
  * an anonymous page pointing to this anon_vma needs to be unmapped:
@@ -39,15 +41,12 @@ struct anon_vma {
 	atomic_t refcount;
 
 	/*
-	 * Count of child anon_vmas. Equals to the count of all anon_vmas that
-	 * have ->parent pointing to this one, including itself.
+	 * Count of child anon_vmas and VMAs which points to this anon_vma.
 	 *
 	 * This counter is used for making decision about reusing anon_vma
 	 * instead of forking new one. See comments in function anon_vma_clone.
 	 */
-	unsigned long num_children;
-	/* Count of VMAs whose ->anon_vma pointer points to this object. */
-	unsigned long num_active_vmas;
+	unsigned degree;
 
 	struct anon_vma *parent;	/* Parent of this anon_vma */
 
@@ -301,7 +300,15 @@ static inline int page_mkclean(struct page *page)
 	return 0;
 }
 
-
 #endif	/* CONFIG_MMU */
+
+/*
+ * Return values of try_to_unmap
+ */
+#define SWAP_SUCCESS	0
+#define SWAP_AGAIN	1
+#define SWAP_FAIL	2
+#define SWAP_MLOCK	3
+#define SWAP_LZFREE	4
 
 #endif	/* _LINUX_RMAP_H */

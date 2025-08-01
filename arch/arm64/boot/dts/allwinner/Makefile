@@ -27,7 +27,3 @@ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h6-orangepi-lite2.dtb
 dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h6-orangepi-one-plus.dtb
 dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h6-pine-h64.dtb
 dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h6-tanix-tx6.dtb
-dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h6-vplus-cloud.dtb
-dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h6-vplus-cloud-2ghz.dtb
-#dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h6-vplus-cloud-xhci.dtb
-#dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h6-vplus-cloud-xhci-2ghz.dtb

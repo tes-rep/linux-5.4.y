@@ -6,8 +6,8 @@
 #include <linux/module.h>
 #include <linux/arm-smccc.h>
 #include "clk-regmap.h"
-#include "clk-cpu-dyndiv.h"
 #include "clk-secure.h"
+#include "clk-cpu-dyndiv.h"
 
 static unsigned long clk_regmap_secure_div_recalc_rate(struct clk_hw *hw,
 						       unsigned long prate)
@@ -84,16 +84,18 @@ static int clk_regmap_secure_div_set_rate(struct clk_hw *hw, unsigned long rate,
 
 /* Would prefer clk_regmap_div_ro_ops but clashes with qcom */
 
-const struct clk_ops meson_clk_regmap_secure_divider_ops = {
+const struct clk_ops clk_regmap_secure_divider_ops = {
 	.recalc_rate = clk_regmap_secure_div_recalc_rate,
 	.round_rate = clk_regmap_secure_div_round_rate,
 	.set_rate = clk_regmap_secure_div_set_rate,
 };
+EXPORT_SYMBOL_GPL(clk_regmap_secure_divider_ops);
 
-const struct clk_ops meson_clk_regmap_secure_divider_ro_ops = {
+const struct clk_ops clk_regmap_secure_divider_ro_ops = {
 	.recalc_rate = clk_regmap_secure_div_recalc_rate,
 	.round_rate = clk_regmap_secure_div_round_rate,
 };
+EXPORT_SYMBOL_GPL(clk_regmap_secure_divider_ro_ops);
 
 static u8 clk_regmap_secure_mux_get_parent(struct clk_hw *hw)
 {
@@ -163,17 +165,19 @@ static int clk_regmap_secure_mux_determine_rate(struct clk_hw *hw,
 	return clk_mux_determine_rate_flags(hw, req, mux->flags);
 }
 
-const struct clk_ops meson_clk_regmap_secure_mux_ops = {
+const struct clk_ops clk_regmap_secure_mux_ops = {
 	.get_parent = clk_regmap_secure_mux_get_parent,
 	.set_parent = clk_regmap__secure_mux_set_parent,
 	.determine_rate = clk_regmap_secure_mux_determine_rate,
 };
+EXPORT_SYMBOL_GPL(clk_regmap_secure_mux_ops);
 
-const struct clk_ops meson_clk_regmap_secure_mux_ro_ops = {
+const struct clk_ops clk_regmap_secure_mux_ro_ops = {
 	.get_parent = clk_regmap_secure_mux_get_parent,
 };
+EXPORT_SYMBOL_GPL(clk_regmap_secure_mux_ro_ops);
 
-static struct meson_clk_cpu_dyndiv_data *
+static inline struct meson_clk_cpu_dyndiv_data *
 meson_clk_cpu_dyndiv_data(struct clk_regmap *clk)
 {
 	return (struct meson_clk_cpu_dyndiv_data *)clk->data;
@@ -231,6 +235,7 @@ const struct clk_ops meson_secure_clk_cpu_dyndiv_ops = {
 	.round_rate = meson_secure_clk_cpu_dyndiv_round_rate,
 	.set_rate = meson_secure_clk_cpu_dyndiv_set_rate,
 };
+EXPORT_SYMBOL_GPL(meson_secure_clk_cpu_dyndiv_ops);
 
 MODULE_DESCRIPTION("Amlogic regmap backed clock driver");
 MODULE_LICENSE("GPL v2");

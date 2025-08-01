@@ -10,12 +10,11 @@
 #ifndef _DT_BINDINGS_JLSEMI_PHY_H
 #define _DT_BINDINGS_JLSEMI_PHY_H
 
-/**************************** Linux Version Compatible ********************/
+/**************************** Linux Version Compatible********************/
 #define JLSEMI_DEV_COMPATIBLE	(KERNEL_VERSION(4, 5, 0) > LINUX_VERSION_CODE)
 #define JL2XXX_GET_STRING	(KERNEL_VERSION(4, 5, 0) <= LINUX_VERSION_CODE)
 #define JL2XXX_GET_STAT		(KERNEL_VERSION(4, 5, 0) <= LINUX_VERSION_CODE)
 #define JL2XXX_PHY_TUNABLE	(KERNEL_VERSION(5, 0, 0) <= LINUX_VERSION_CODE)
-#define JLSEMI_PHY_WOL		(KERNEL_VERSION(3, 10, 0) < LINUX_VERSION_CODE)
 /*************************************************************************/
 
 /**************************** JLSemi Debug *******************************/
@@ -49,13 +48,25 @@
 
 /* PHY LED Control Enable Mask Select */
 #define JL1XXX_LED_STATIC_OP_EN		(1 << 0)
-#define JL1XXX_LED_MODE_EN		(1 << 1)
-#define JL1XXX_LED_GLOABL_PERIOD_EN	(1 << 2)
-#define JL1XXX_LED_GLOBAL_ON_EN		(1 << 3)
-#define JL1XXX_LED_GPIO_OUT_EN		(1 << 4)
+#define JL1XXX_LED_DYNAMIC_OP_EN	(1 << 1)
+#define JL1XXX_LED_MODE_EN		(1 << 2)
+#define JL1XXX_LED_GLOABL_PERIOD_EN	(1 << 3)
+#define JL1XXX_LED_GLOBAL_ON_EN		(1 << 4)
+#define JL1XXX_LED_GPIO_OUT_EN		(1 << 5)
+
+/* PHY LED Operation Mode Select */
+#define JL1XXX_LED_OP_NONE		0
+#define JL1XXX_LED_STATIC_C_MACRO	1
+#define JL1XXX_LED_STATIC_DEVICE_TREE	2
+#define JL1XXX_LED_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY LED Operation Mode Config */
+#define JL1XXX_LED_STATIC_OP_MODE	JL1XXX_LED_OP_NONE
+#define JL1XXX_LED_DYNAMIC_OP_MODE	JL1XXX_LED_OP_NONE
+
 /* PHY LED Control Enable Mask Config */
-#define JL1XXX_LED_CTRL_EN	(0)
+#define JL1XXX_LED_CTRL_EN	(JL1XXX_LED_STATIC_OP_EN | \
+				 JL1XXX_LED_DYNAMIC_OP_EN)
 
 /* PHY LED Modes Config */
 #define JL1XXX_CFG_LED_MODE	(JL1XXX_LED0_100_LINK | \
@@ -79,30 +90,55 @@
 /****************************** JL1XXX-WOL ********************************/
 /* PHY WOL Control Enable Mask Select */
 #define JL1XXX_WOL_STATIC_OP_EN		(1 << 0)
+#define JL1XXX_WOL_DYNAMIC_OP_EN	(1 << 1)
+
+/* PHY WOL Operation Mode Select */
+#define JL1XXX_WOL_OP_NONE		0
+#define JL1XXX_WOL_STATIC_C_MACRO	1
+#define JL1XXX_WOL_STATIC_DEVICE_TREE	2
+#define JL1XXX_WOL_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY WOL Operation Mode Config */
+#define JL1XXX_WOL_STATIC_OP_MODE	JL1XXX_WOL_OP_NONE
+#define JL1XXX_WOL_DYNAMIC_OP_MODE	JL1XXX_WOL_OP_NONE
+
 /* PHY WOL Control Enable Mask Config */
-#define JL1XXX_WOL_CTRL_EN	(0)
+#define JL1XXX_WOL_CTRL_EN	(JL1XXX_WOL_STATIC_OP_EN | \
+				 JL1XXX_WOL_DYNAMIC_OP_EN)
 
 /*************************************************************************/
 
 /***************************** JL1XXX-INTR *******************************/
 /* PHY Interrupt Control Enable Mask Select */
 #define JL1XXX_INTR_STATIC_OP_EN	(1 << 0)
-#define JL1XXX_INTR_LINK_CHANGE_EN	(1 << 1)
-#define JL1XXX_INTR_AN_ERR_EN		(1 << 2)
+#define JL1XXX_INTR_DYNAMIC_OP_EN	(1 << 1)
+#define JL1XXX_INTR_LINK_CHANGE_EN	(1 << 2)
+#define JL1XXX_INTR_AN_ERR_EN		(1 << 3)
+
+/* PHY Interrupt Operation Mode Select */
+#define JL1XXX_INTR_OP_NONE		0
+#define JL1XXX_INTR_STATIC_C_MACRO	1
+#define JL1XXX_INTR_STATIC_DEVICE_TREE	2
+#define JL1XXX_INTR_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
 /* PHY Interrupt Irq Number Config */
 #define JL1XXX_INTR_IRQ			-1
 
+/* PHY Interrupt Operation Mode Config */
+#define JL1XXX_INTR_STATIC_OP_MODE	JL1XXX_INTR_OP_NONE
+#define JL1XXX_INTR_DYNAMIC_OP_MODE	JL1XXX_INTR_OP_NONE
+
 /* PHY Interrupt Control Enable Mask Config */
-#define JL1XXX_INTR_CTRL_EN	(0)
+#define JL1XXX_INTR_CTRL_EN	(JL1XXX_INTR_STATIC_OP_EN | \
+				 JL1XXX_INTR_LINK_CHANGE_EN)
 /*************************************************************************/
 
 /**************************** JL1XXX-MDI *********************************/
 /* PHY MDI Control Mode Enable Mask Select */
 #define JL1XXX_MDI_STATIC_OP_EN		(1 << 0)
-#define JL1XXX_MDI_RATE_EN		(1 << 1)
-#define JL1XXX_MDI_AMPLITUDE_EN		(1 << 2)
+#define JL1XXX_MDI_DYNAMIC_OP_EN	(1 << 1)
+#define JL1XXX_MDI_RATE_EN		(1 << 2)
+#define JL1XXX_MDI_AMPLITUDE_EN		(1 << 3)
 
 /* PHY MDI Rate Select */
 #define JL1XXX_MDI_RATE_STANDARD	0
@@ -117,9 +153,20 @@
 #define JL1XXX_MDI_AMPLITUDE5		5
 #define JL1XXX_MDI_AMPLITUDE6		6
 #define JL1XXX_MDI_AMPLITUDE7		7
+
+/* PHY Work Mode Operation Mode Select */
+#define JL1XXX_MDI_OP_NONE		0
+#define JL1XXX_MDI_STATIC_C_MACRO	1
+#define JL1XXX_MDI_STATIC_DEVICE_TREE	2
+#define JL1XXX_MDI_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY Work Mode Operation Mode config */
+#define JL1XXX_MDI_STATIC_OP_MODE	JL1XXX_MDI_OP_NONE
+#define JL1XXX_MDI_DYNAMIC_OP_MODE	JL1XXX_MDI_OP_NONE
+
 /* PHY MDI Control Mode Enable Mask Config */
-#define JL1XXX_MDI_CTRL_EN		(0)
+#define JL1XXX_MDI_CTRL_EN		(JL1XXX_MDI_STATIC_OP_EN | \
+					 JL1XXX_MDI_RATE_EN)
 
 /* PHY MDI Rate Config */
 #define JL1XXX_MDI_RATE			JL1XXX_MDI_RATE_ACCELERATE
@@ -132,14 +179,27 @@
 /**************************** JL1XXX-RMII ********************************/
 /* PHY RMII Control Mode Enable Mask Select */
 #define JL1XXX_RMII_STATIC_OP_EN	(1 << 0)
-#define JL1XXX_RMII_MODE_EN		(1 << 1)
-#define JL1XXX_RMII_CLK_50M_INPUT_EN	(1 << 2)
-#define JL1XXX_RMII_TX_SKEW_EN		(1 << 3)
-#define JL1XXX_RMII_RX_SKEW_EN		(1 << 4)
-#define JL1XXX_RMII_CRS_DV_EN		(1 << 5)
+#define JL1XXX_RMII_DYNAMIC_OP_EN	(1 << 1)
+#define JL1XXX_RMII_MODE_EN		(1 << 2)
+#define JL1XXX_RMII_CLK_50M_INPUT_EN	(1 << 3)
+#define JL1XXX_RMII_TX_SKEW_EN		(1 << 4)
+#define JL1XXX_RMII_RX_SKEW_EN		(1 << 5)
+#define JL1XXX_RMII_CRS_DV_EN		(1 << 6)
+
+/* PHY RMII Operation Mode Select */
+#define JL1XXX_RMII_OP_NONE		0
+#define JL1XXX_RMII_STATIC_C_MACRO	1
+#define JL1XXX_RMII_STATIC_DEVICE_TREE	2
+#define JL1XXX_RMII_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY RMII Operation Mode Config */
+#define JL1XXX_RMII_STATIC_OP_MODE	JL1XXX_RMII_OP_NONE
+#define JL1XXX_RMII_DYNAMIC_OP_MODE	JL1XXX_RMII_OP_NONE
+
 /* PHY RMII Control Mode Enable Mask Config */
-#define JL1XXX_RMII_CTRL_EN		(0)
+#define JL1XXX_RMII_CTRL_EN		(JL1XXX_RMII_STATIC_OP_EN | \
+					 JL1XXX_RMII_MODE_EN | \
+					 JL1XXX_RMII_TX_SKEW_EN)
 
 /* PHY RMII Timing Config */
 #define JL1XXX_RMII_TX_TIMING		0xf
@@ -171,14 +231,25 @@
 
 /* PHY LED Control Enable Mask Select */
 #define JL2XXX_LED_STATIC_OP_EN		(1 << 0)
-#define JL2XXX_LED_MODE_EN		(1 << 1)
-#define JL2XXX_LED_GLOABL_PERIOD_EN	(1 << 2)
-#define JL2XXX_LED_GLOBAL_ON_EN		(1 << 3)
-#define JL2XXX_LED_POLARITY_EN		(1 << 4)
+#define JL2XXX_LED_DYNAMIC_OP_EN	(1 << 1)
+#define JL2XXX_LED_MODE_EN		(1 << 2)
+#define JL2XXX_LED_GLOABL_PERIOD_EN	(1 << 3)
+#define JL2XXX_LED_GLOBAL_ON_EN		(1 << 4)
+#define JL2XXX_LED_POLARITY_EN		(1 << 5)
 
+/* PHY LED Operation Mode Select */
+#define JL2XXX_LED_OP_NONE		0
+#define JL2XXX_LED_STATIC_C_MACRO	1
+#define JL2XXX_LED_STATIC_DEVICE_TREE	2
+#define JL2XXX_LED_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY LED Operation Mode Config */
+#define JL2XXX_LED_STATIC_OP_MODE	JL2XXX_LED_OP_NONE
+#define JL2XXX_LED_DYNAMIC_OP_MODE	JL2XXX_LED_OP_NONE
+
 /* PHY LED Control Enable Mask Config */
-#define JL2XXX_LED_CTRL_EN	(0)
+#define JL2XXX_LED_CTRL_EN	(JL2XXX_LED_STATIC_OP_EN | \
+				 JL2XXX_LED_MODE_EN)
 
 /* PHY LED Modes Config */
 #define JL2XXX_CFG_LED_MODE	(JL2XXX_LED0_LINK10 | \
@@ -203,9 +274,22 @@
 /**************************** JL2XXX-FLD *********************************/
 /* PHY Fast Link Down Control Enable Mask Select */
 #define JL2XXX_FLD_STATIC_OP_EN		(1 << 0)
+#define JL2XXX_FLD_DYNAMIC_OP_EN	(1 << 1)
+#define JL2XXX_FLD_DELAY_EN		(1 << 2)
+
+/* PHY Fast Link Down Operation Mode Select */
+#define JL2XXX_FLD_OP_NONE		0
+#define JL2XXX_FLD_STATIC_C_MACRO	1
+#define JL2XXX_FLD_STATIC_DEVICE_TREE	2
+#define JL2XXX_FLD_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY Fast Link Down Operation Mode Config */
+#define JL2XXX_FLD_STATIC_OP_MODE	JL2XXX_FLD_OP_NONE
+#define JL2XXX_FLD_DYNAMIC_OP_MODE	JL2XXX_FLD_OP_NONE
+
 /* PHY Fast Link Down Control Enable Mask Config */
-#define JL2XXX_FLD_CTRL_EN		(0)
+#define JL2XXX_FLD_CTRL_EN		(JL2XXX_FLD_STATIC_OP_EN | \
+					 JL2XXX_FLD_DYNAMIC_OP_EN)
 
 /* PHY Fast Link Down Delay Config */
 #define JL2XXX_FLD_DELAY		0
@@ -214,56 +298,114 @@
 /**************************** JL2XXX-WOL *********************************/
 /* PHY WOL Control Enable Mask Select */
 #define JL2XXX_WOL_STATIC_OP_EN		(1 << 0)
+#define JL2XXX_WOL_DYNAMIC_OP_EN	(1 << 1)
 
+/* PHY WOL Operation Mode Select */
+#define JL2XXX_WOL_OP_NONE		0
+#define JL2XXX_WOL_STATIC_C_MACRO	1
+#define JL2XXX_WOL_STATIC_DEVICE_TREE	2
+#define JL2XXX_WOL_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY WOL Operation Mode Config */
+#define JL2XXX_WOL_STATIC_OP_MODE	JL2XXX_WOL_OP_NONE
+#define JL2XXX_WOL_DYNAMIC_OP_MODE	JL2XXX_WOL_OP_NONE
+
 /* PHY WOL Control Enable Mask Config */
-#define JL2XXX_WOL_CTRL_EN	(0)
+#define JL2XXX_WOL_CTRL_EN	(JL2XXX_WOL_STATIC_OP_EN | \
+				 JL2XXX_WOL_DYNAMIC_OP_EN)
 /*************************************************************************/
 
 /**************************** JL2XXX-INTR ********************************/
 /* PHY Interrupt Control Enable Mask Select */
 #define JL2XXX_INTR_STATIC_OP_EN	(1 << 0)
-#define JL2XXX_INTR_LINK_CHANGE_EN	(1 << 1)
-#define JL2XXX_INTR_AN_ERR_EN		(1 << 2)
-#define JL2XXX_INTR_AN_COMPLETE_EN	(1 << 3)
-#define JL2XXX_INTR_AN_PAGE_RECE	(1 << 4)
+#define JL2XXX_INTR_DYNAMIC_OP_EN	(1 << 1)
+#define JL2XXX_INTR_LINK_CHANGE_EN	(1 << 2)
+#define JL2XXX_INTR_AN_ERR_EN		(1 << 3)
+#define JL2XXX_INTR_AN_COMPLETE_EN	(1 << 4)
+#define JL2XXX_INTR_AN_PAGE_RECE	(1 << 5)
+
+/* PHY Interrupt Operation Mode Select */
+#define JL2XXX_INTR_OP_NONE		0
+#define JL2XXX_INTR_STATIC_C_MACRO	1
+#define JL2XXX_INTR_STATIC_DEVICE_TREE	2
+#define JL2XXX_INTR_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
 /* PHY Interrupt Irq Number Config */
 #define JL2XXX_INTR_IRQ			-1
 
+/* PHY Interrupt Operation Mode Config */
+#define JL2XXX_INTR_STATIC_OP_MODE	JL2XXX_INTR_OP_NONE
+#define JL2XXX_INTR_DYNAMIC_OP_MODE	JL2XXX_INTR_OP_NONE
+
 /* PHY Interrupt Control Enable Mask Config */
-#define JL2XXX_INTR_CTRL_EN	(0)
+#define JL2XXX_INTR_CTRL_EN	(JL2XXX_INTR_STATIC_OP_EN | \
+				 JL2XXX_INTR_LINK_CHANGE_EN)
 /*************************************************************************/
 
 /**************************** JL2XXX-DSFT ********************************/
 /* PHY Downshift Control Enable Mask */
 #define JL2XXX_DSFT_STATIC_OP_EN	(1 << 0)
+#define JL2XXX_DSFT_DYNAMIC_OP_EN	(1 << 1)
+
+/* PHY Downshift Operation Mode Select */
+#define JL2XXX_DSFT_OP_NONE		0
+#define JL2XXX_DSFT_STATIC_C_MACRO	1
+#define JL2XXX_DSFT_STATIC_DEVICE_TREE	2
+#define JL2XXX_DSFT_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY Downshift Operation Mode Config */
+#define JL2XXX_DSFT_STATIC_OP_MODE	JL2XXX_DSFT_OP_NONE
+#define JL2XXX_DSFT_DYNAMIC_OP_MODE	JL2XXX_DSFT_OP_NONE
+
 /* PHY Downshift Control Enable Config */
-#define JL2XXX_DSFT_CTRL_EN	(0)
+#define JL2XXX_DSFT_CTRL_EN	(JL2XXX_DSFT_STATIC_OP_EN | \
+				 JL2XXX_DSFT_DYNAMIC_OP_EN)
 
 /* PHY Downshift Count Config */
-#define JL2XXX_DSFT_AN_CNT		4
+#define JL2XXX_DSFT_AN_CNT		3
 /*************************************************************************/
 
 /**************************** JL2XXX-RGMII *******************************/
 /* PHY RGMII Control Mode Enable Mask Select */
 #define JL2XXX_RGMII_STATIC_OP_EN	(1 << 0)
-#define JL2XXX_RGMII_TX_DLY_EN		(1 << 1)
-#define JL2XXX_RGMII_RX_DLY_EN		(1 << 2)
+#define JL2XXX_RGMII_DYNAMIC_OP_EN	(1 << 1)
+#define JL2XXX_RGMII_TX_DLY_EN		(1 << 2)
+#define JL2XXX_RGMII_RX_DLY_EN		(1 << 3)
 /* PHY RGMII DELAY BIT */
 #define JL2XXX_RGMII_TX_DLY_2NS		(1 << 8)
 #define JL2XXX_RGMII_RX_DLY_2NS		(1 << 9)
+
+/* PHY RGMII Operation Mode Select */
+#define JL2XXX_RGMII_OP_NONE		0
+#define JL2XXX_RGMII_STATIC_C_MACRO	1
+#define JL2XXX_RGMII_STATIC_DEVICE_TREE	2
+#define JL2XXX_RGMII_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY RGMII Operation Mode Config */
+#define JL2XXX_RGMII_STATIC_OP_MODE	JL2XXX_RGMII_OP_NONE
+#define JL2XXX_RGMII_DYNAMIC_OP_MODE	JL2XXX_RGMII_OP_NONE
+
 /* PHY RGMII Control Mode Enable Mask Config */
-#define JL2XXX_RGMII_CTRL_EN	(0)
+#define JL2XXX_RGMII_CTRL_EN	(JL2XXX_RGMII_STATIC_OP_EN | \
+				 JL2XXX_RGMII_TX_DLY_EN)
 
 /*************************************************************************/
 
 /**************************** JL2XXX-PATCH *******************************/
 /* PHY Patch Control Mode Enable Mask Select */
 #define JL2XXX_PATCH_STATIC_OP_EN	(1 << 0)
+#define JL2XXX_PATCH_DYNAMIC_OP_EN	(1 << 1)
+
+/* PHY Patch Operation Mode Select */
+#define JL2XXX_PATCH_OP_NONE		0
+#define JL2XXX_PATCH_STATIC_C_MACRO	1
+#define JL2XXX_PATCH_STATIC_DEVICE_TREE	2
+#define JL2XXX_PATCH_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY Patch Operation Mode Config */
+#define JL2XXX_PATCH_STATIC_OP_MODE	JL2XXX_PATCH_STATIC_C_MACRO
+#define JL2XXX_PATCH_DYNAMIC_OP_MODE	JL2XXX_PATCH_OP_NONE
+
 /* PHY Patch Control Mode Enable Mask Config */
 #define JL2XXX_PATCH_CTRL_EN	(JL2XXX_PATCH_STATIC_OP_EN)
 
@@ -272,18 +414,30 @@
 /**************************** JL2XXX-CLOCK *******************************/
 /* PHY Clock Control Mode Enable Mask Select */
 #define JL2XXX_CLK_STATIC_OP_EN		(1 << 0)
-#define JL2XXX_25M_CLK_OUT_EN		(1 << 1)
-#define JL2XXX_125M_CLK_OUT_EN		(1 << 2)
-#define JL2XXX_CLK_OUT_DIS		(1 << 3)
+#define JL2XXX_CLK_DYNAMIC_OP_EN	(1 << 1)
+#define JL2XXX_25M_CLK_OUT_EN		(1 << 2)
+#define JL2XXX_125M_CLK_OUT_EN		(1 << 3)
+
+/* PHY Clock Operation Mode Select */
+#define JL2XXX_CLK_OP_NONE		0
+#define JL2XXX_CLK_STATIC_C_MACRO	1
+#define JL2XXX_CLK_STATIC_DEVICE_TREE	2
+#define JL2XXX_CLK_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY Clock Operation Mode Config */
+#define JL2XXX_CLK_STATIC_OP_MODE	JL2XXX_CLK_OP_NONE
+#define JL2XXX_CLK_DYNAMIC_OP_MODE	JL2XXX_CLK_OP_NONE
+
 /* PHY Clock Control Mode Enable Mask Config */
-#define JL2XXX_CLK_CTRL_EN	(0)
+#define JL2XXX_CLK_CTRL_EN	(JL2XXX_CLK_STATIC_OP_EN | \
+				 JL2XXX_125M_CLK_OUT_EN)
 
 /*************************************************************************/
 
 /**************************** JL2XXX-WORK_MODE ***************************/
 /* PHY Work Mode Control Mode Enable Mask Select */
 #define JL2XXX_WORK_MODE_STATIC_OP_EN	(1 << 0)
+#define JL2XXX_WORK_MODE_DYNAMIC_OP_EN	(1 << 1)
 
 /* PHY Work Mode Select */
 #define JL2XXX_UTP_RGMII_MODE		0
@@ -294,18 +448,29 @@
 #define JL2XXX_MAC_SGMII_RGMII_MODE	5
 #define JL2XXX_UTP_FIBER_FORCE_MODE1	6
 #define JL2XXX_UTP_FIBER_FORCE_MODE2	7
+
+/* PHY Work Mode Operation Mode Select */
+#define JL2XXX_WORK_MODE_OP_NONE		0
+#define JL2XXX_WORK_MODE_STATIC_C_MACRO		1
+#define JL2XXX_WORK_MODE_STATIC_DEVICE_TREE	2
+#define JL2XXX_WORK_MODE_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY Work Mode Operation Mode Config */
+#define JL2XXX_WORK_MODE_STATIC_OP_MODE		JL2XXX_WORK_MODE_OP_NONE
+#define JL2XXX_WORK_MODE_DYNAMIC_OP_MODE	JL2XXX_WORK_MODE_OP_NONE
+
 /* PHY Work Mode Control Mode Enable Mask Config */
-#define JL2XXX_WORK_MODE_CTRL_EN	(0)
+#define JL2XXX_WORK_MODE_CTRL_EN	(JL2XXX_WORK_MODE_STATIC_OP_EN)
 
 /* PHY Work Mode Config */
-#define JL2XXX_WORK_MODE_MODE		JL2XXX_UTP_RGMII_MODE
+#define JL2XXX_WOEK_MODE_MODE		JL2XXX_UTP_RGMII_MODE
 
 /*************************************************************************/
 
 /**************************** JL2XXX-LOOPBACK ****************************/
 /* PHY Loopback Control Mode Enable Mask Select */
 #define JL2XXX_LPBK_STATIC_OP_EN	(1 << 0)
+#define JL2XXX_LPBK_DYNAMIC_OP_EN	(1 << 1)
 
 /* PHY Loopback Mode Select */
 #define JL2XXX_LPBK_PCS_10M		0
@@ -313,9 +478,19 @@
 #define JL2XXX_LPBK_PCS_1000M		2
 #define JL2XXX_LPBK_PMD_1000M		3
 #define JL2XXX_LPBK_EXT_STUB_1000M	4
+
+/* PHY Loopback Operation Mode Select */
+#define JL2XXX_LPBK_OP_NONE		0
+#define JL2XXX_LPBK_STATIC_C_MACRO	1
+#define JL2XXX_LPBK_STATIC_DEVICE_TREE	2
+#define JL2XXX_LPBK_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY Loopback Operation Mode Config */
+#define JL2XXX_LPBK_STATIC_OP_MODE	JL2XXX_LPBK_OP_NONE
+#define JL2XXX_LPBK_DYNAMIC_OP_MODE	JL2XXX_LPBK_OP_NONE
+
 /* PHY Loopback Control Mode Enable Mask Config */
-#define JL2XXX_LPBK_CTRL_EN		(0)
+#define JL2XXX_LPBK_CTRL_EN		(JL2XXX_LPBK_STATIC_OP_EN)
 
 /* PHY Loopback Mode Config */
 #define JL2XXX_LPBK_MODE		JL2XXX_LPBK_PCS_1000M
@@ -324,18 +499,21 @@
 /**************************** JL2XXX-SLEW_RATE ****************************/
 /* PHY Slew Rate Control Mode Enable Mask Select */
 #define JL2XXX_SLEW_RATE_STATIC_OP_EN	(1 << 0)
+#define JL2XXX_SLEW_RATE_DYNAMIC_OP_EN	(1 << 1)
+
+/* PHY Slew Rate Operation Mode Select */
+#define JL2XXX_SLEW_RATE_OP_NONE		0
+#define JL2XXX_SLEW_RATE_STATIC_C_MACRO	1
+#define JL2XXX_SLEW_RATE_STATIC_DEVICE_TREE	2
+#define JL2XXX_SLEW_RATE_DYNAMIC_ETHTOOL	3
 //-----------------------------------------------------------------------//
+/* PHY Slew Rate Operation Mode Config */
+#define JL2XXX_SLEW_RATE_STATIC_OP_MODE	JL2XXX_SLEW_RATE_OP_NONE
+#define JL2XXX_SLEW_RATE_DYNAMIC_OP_MODE	JL2XXX_SLEW_RATE_OP_NONE
+
 /* PHY Slew Rate Control Mode Enable Mask Config */
-#define JL2XXX_SLEW_RATE_CTRL_EN	(0)
-
-/*************************************************************************/
-
-/**************************** JL2XXX-RXC_OUT *****************************/
-/* PHY Rx Clock Out Control Mode Enable Mask Select */
-#define JL2XXX_RXC_OUT_STATIC_OP_EN	(1 << 0)
-//-----------------------------------------------------------------------//
-/* PHY Rx Clock Out Control Mode Enable Mask Config */
-#define JL2XXX_RXC_OUT_CTRL_EN		(0)
+#define JL2XXX_SLEW_RATE_CTRL_EN		(JL2XXX_SLEW_RATE_STATIC_OP_EN)
 
 /*************************************************************************/
 #endif
+

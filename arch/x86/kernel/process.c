@@ -96,12 +96,7 @@ EXPORT_PER_CPU_SYMBOL_GPL(__tss_limit_invalid);
  */
 int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 {
-	/* init_task is not dynamically sized (incomplete FPU state) */
-	if (unlikely(src == &init_task))
-		memcpy_and_pad(dst, arch_task_struct_size, src, sizeof(init_task), 0);
-	else
-		memcpy(dst, src, arch_task_struct_size);
-
+	memcpy(dst, src, arch_task_struct_size);
 #ifdef CONFIG_VM86
 	dst->thread.vm86 = NULL;
 #endif
@@ -454,7 +449,7 @@ static __always_inline void __speculation_ctrl_update(unsigned long tifp,
 	}
 
 	if (updmsr)
-		update_spec_ctrl_cond(msr);
+		wrmsrl(MSR_IA32_SPEC_CTRL, msr);
 }
 
 static unsigned long speculation_ctrl_update_tif(struct task_struct *tsk)
@@ -664,10 +659,6 @@ static void amd_e400_idle(void)
  */
 static int prefer_mwait_c1_over_halt(const struct cpuinfo_x86 *c)
 {
-	/* User has disallowed the use of MWAIT. Fallback to HALT */
-	if (boot_option_idle_override == IDLE_NOMWAIT)
-		return 0;
-
 	if (c->x86_vendor != X86_VENDOR_INTEL)
 		return 0;
 
@@ -778,8 +769,9 @@ static int __init idle_setup(char *str)
 	} else if (!strcmp(str, "nomwait")) {
 		/*
 		 * If the boot option of "idle=nomwait" is added,
-		 * it means that mwait will be disabled for CPU C1/C2/C3
-		 * states.
+		 * it means that mwait will be disabled for CPU C2/C3
+		 * states. In such case it won't touch the variable
+		 * of boot_option_idle_override.
 		 */
 		boot_option_idle_override = IDLE_NOMWAIT;
 	} else
@@ -798,10 +790,7 @@ unsigned long arch_align_stack(unsigned long sp)
 
 unsigned long arch_randomize_brk(struct mm_struct *mm)
 {
-	if (mmap_is_ia32())
-		return randomize_page(mm->brk, SZ_32M);
-
-	return randomize_page(mm->brk, SZ_1G);
+	return randomize_page(mm->brk, 0x02000000);
 }
 
 /*

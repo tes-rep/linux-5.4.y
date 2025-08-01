@@ -12,9 +12,18 @@
 #include <linux/wait.h>
 #include <linux/usb/hcd.h>
 #include <linux/scatterlist.h>
+#ifdef CONFIG_AMLOGIC_USB
+#include <linux/amlogic/cpu_version.h>
+#include <linux/dma-mapping.h>
+#include "usb.h"
+#include "../host/xhci.h"
+#endif
 
 #define to_urb(d) container_of(d, struct urb, kref)
 
+#ifdef CONFIG_AMLOGIC_USB
+static DEFINE_SPINLOCK(crg_urb_lock);
+#endif
 
 static void urb_destroy(struct kref *kref)
 {
@@ -90,11 +99,40 @@ EXPORT_SYMBOL_GPL(usb_alloc_urb);
  * Note: The transfer buffer associated with the urb is not freed unless the
  * URB_FREE_BUFFER transfer flag is set.
  */
+#ifdef CONFIG_AMLOGIC_USB
+void usb_free_urb(struct urb *urb)
+{
+	unsigned long flags;
+	struct usb_hcd	*hcd;
+	struct xhci_hcd *xhci;
+
+	if ((urb) && urb->need_div) {
+		hcd = bus_to_hcd(urb->dev->bus);
+		xhci = hcd_to_xhci(hcd);
+		if (xhci->quirks & XHCI_CRG_HOST_010) {
+			spin_lock_irqsave(&crg_urb_lock, flags);
+			memset(urb->dst_buf, 0, sizeof(urb->dst_buf));
+			if (urb->tmp_dma)
+				dma_unmap_single(urb->dev->bus->controller,
+				urb->tmp_dma, 4096, DMA_FROM_DEVICE);
+			kfree(urb->tmp_buf);
+
+			urb->tmp_dma = 0;
+			urb->tmp_buf = NULL;
+			spin_unlock_irqrestore(&crg_urb_lock, flags);
+		}
+	}
+
+	if (urb)
+		kref_put(&urb->kref, urb_destroy);
+}
+#else
 void usb_free_urb(struct urb *urb)
 {
 	if (urb)
 		kref_put(&urb->kref, urb_destroy);
 }
+#endif
 EXPORT_SYMBOL_GPL(usb_free_urb);
 
 /**
@@ -192,28 +230,6 @@ static const int pipetypes[4] = {
 };
 
 /**
- * usb_pipe_type_check - sanity check of a specific pipe for a usb device
- * @dev: struct usb_device to be checked
- * @pipe: pipe to check
- *
- * This performs a light-weight sanity check for the endpoint in the
- * given usb device.  It returns 0 if the pipe is valid for the specific usb
- * device, otherwise a negative error code.
- */
-int usb_pipe_type_check(struct usb_device *dev, unsigned int pipe)
-{
-	const struct usb_host_endpoint *ep;
-
-	ep = usb_pipe_endpoint(dev, pipe);
-	if (!ep)
-		return -EINVAL;
-	if (usb_pipetype(pipe) != pipetypes[usb_endpoint_type(&ep->desc)])
-		return -EINVAL;
-	return 0;
-}
-EXPORT_SYMBOL_GPL(usb_pipe_type_check);
-
-/**
  * usb_urb_ep_type_check - sanity check of endpoint in the given urb
  * @urb: urb to be checked
  *
@@ -223,7 +239,14 @@ EXPORT_SYMBOL_GPL(usb_pipe_type_check);
  */
 int usb_urb_ep_type_check(const struct urb *urb)
 {
-	return usb_pipe_type_check(urb->dev, urb->pipe);
+	const struct usb_host_endpoint *ep;
+
+	ep = usb_pipe_endpoint(urb->dev, urb->pipe);
+	if (!ep)
+		return -EINVAL;
+	if (usb_pipetype(urb->pipe) != pipetypes[usb_endpoint_type(&ep->desc)])
+		return -EINVAL;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(usb_urb_ep_type_check);
 
@@ -379,6 +402,11 @@ int usb_submit_urb(struct urb *urb, gfp_t mem_flags)
 		return -EBUSY;
 	}
 
+#ifdef CONFIG_AMLOGIC_USB
+	if (urb->unlinked)
+		urb->unlinked = 0;
+#endif
+
 	dev = urb->dev;
 	if ((!dev) || (dev->state < USB_STATE_UNAUTHENTICATED))
 		return -ENODEV;
@@ -489,9 +517,16 @@ int usb_submit_urb(struct urb *urb, gfp_t mem_flags)
 	 */
 
 	/* Check that the pipe's type matches the endpoint's type */
-	if (usb_pipe_type_check(urb->dev, urb->pipe))
+	if (usb_urb_ep_type_check(urb)) {
+#ifdef CONFIG_AMLOGIC_USB
+		if (!bt_intep_is_blacklist(dev))
+			dev_WARN(&dev->dev, "BOGUS urb xfer, pipe %x != type %x\n",
+					usb_pipetype(urb->pipe), pipetypes[xfertype]);
+#else
 		dev_WARN(&dev->dev, "BOGUS urb xfer, pipe %x != type %x\n",
 			usb_pipetype(urb->pipe), pipetypes[xfertype]);
+#endif
+	}
 
 	/* Check against a simple/standard policy */
 	allowed = (URB_NO_TRANSFER_DMA_MAP | URB_NO_INTERRUPT | URB_DIR_MASK |

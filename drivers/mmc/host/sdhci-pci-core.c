@@ -669,12 +669,8 @@ static void sdhci_intel_set_power(struct sdhci_host *host, unsigned char mode,
 
 	sdhci_set_power(host, mode, vdd);
 
-	if (mode == MMC_POWER_OFF) {
-		if (slot->chip->pdev->device == PCI_DEVICE_ID_INTEL_APL_SD ||
-		    slot->chip->pdev->device == PCI_DEVICE_ID_INTEL_BYT_SD)
-			usleep_range(15000, 17500);
+	if (mode == MMC_POWER_OFF)
 		return;
-	}
 
 	/*
 	 * Bus power might not enable after D3 -> D0 transition due to the
@@ -1380,7 +1376,7 @@ static int jmicron_pmos(struct sdhci_pci_chip *chip, int on)
 
 	ret = pci_read_config_byte(chip->pdev, 0xAE, &scratch);
 	if (ret)
-		goto fail;
+		return ret;
 
 	/*
 	 * Turn PMOS on [bit 0], set over current detection to 2.4 V
@@ -1391,10 +1387,7 @@ static int jmicron_pmos(struct sdhci_pci_chip *chip, int on)
 	else
 		scratch &= ~0x47;
 
-	ret = pci_write_config_byte(chip->pdev, 0xAE, scratch);
-
-fail:
-	return pcibios_err_to_errno(ret);
+	return pci_write_config_byte(chip->pdev, 0xAE, scratch);
 }
 
 static int jmicron_probe(struct sdhci_pci_chip *chip)
@@ -1801,8 +1794,6 @@ static int amd_probe(struct sdhci_pci_chip *chip)
 			gen = AMD_CHIPSET_UNKNOWN;
 		}
 	}
-
-	pci_dev_put(smbus_dev);
 
 	if (gen == AMD_CHIPSET_BEFORE_ML || gen == AMD_CHIPSET_CZ)
 		chip->quirks2 |= SDHCI_QUIRK2_CLEAR_TRANSFERMODE_REG_BEFORE_CMD;
@@ -2310,7 +2301,7 @@ static int sdhci_pci_probe(struct pci_dev *pdev,
 
 	ret = pci_read_config_byte(pdev, PCI_SLOT_INFO, &slots);
 	if (ret)
-		return pcibios_err_to_errno(ret);
+		return ret;
 
 	slots = PCI_SLOT_INFO_SLOTS(slots) + 1;
 	dev_dbg(&pdev->dev, "found %d slot(s)\n", slots);
@@ -2319,7 +2310,7 @@ static int sdhci_pci_probe(struct pci_dev *pdev,
 
 	ret = pci_read_config_byte(pdev, PCI_SLOT_INFO, &first_bar);
 	if (ret)
-		return pcibios_err_to_errno(ret);
+		return ret;
 
 	first_bar &= PCI_SLOT_INFO_FIRST_BAR_MASK;
 

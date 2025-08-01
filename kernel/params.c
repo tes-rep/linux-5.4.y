@@ -13,6 +13,14 @@
 #include <linux/slab.h>
 #include <linux/ctype.h>
 #include <linux/security.h>
+#ifdef CONFIG_AMLOGIC_MODIFY
+#include <linux/async.h>
+#endif
+
+#ifdef CONFIG_AMLOGIC_MODIFY
+static bool async_long_initcall = 1;
+core_param(async_long_initcall, async_long_initcall, bool, 0644);
+#endif
 
 #ifdef CONFIG_SYSFS
 /* Protects all built-in parameters, modules use their own param_lock */
@@ -241,24 +249,6 @@ STANDARD_PARAM_DEF(uint,	unsigned int,		"%u",   kstrtouint);
 STANDARD_PARAM_DEF(long,	long,			"%li",  kstrtol);
 STANDARD_PARAM_DEF(ulong,	unsigned long,		"%lu",  kstrtoul);
 STANDARD_PARAM_DEF(ullong,	unsigned long long,	"%llu", kstrtoull);
-
-int param_set_uint_minmax(const char *val, const struct kernel_param *kp,
-		unsigned int min, unsigned int max)
-{
-	unsigned int num;
-	int ret;
-
-	if (!val)
-		return -EINVAL;
-	ret = kstrtouint(val, 0, &num);
-	if (ret)
-		return ret;
-	if (num < min || num > max)
-		return -EINVAL;
-	*((unsigned int *)kp->arg) = num;
-	return 0;
-}
-EXPORT_SYMBOL_GPL(param_set_uint_minmax);
 
 int param_set_charp(const char *val, const struct kernel_param *kp)
 {
@@ -946,9 +936,7 @@ int module_sysfs_initialized;
 static void module_kobj_release(struct kobject *kobj)
 {
 	struct module_kobject *mk = to_module_kobject(kobj);
-
-	if (mk->kobj_completion)
-		complete(mk->kobj_completion);
+	complete(mk->kobj_completion);
 }
 
 struct kobj_type module_ktype = {
@@ -956,9 +944,19 @@ struct kobj_type module_ktype = {
 	.sysfs_ops =	&module_sysfs_ops,
 };
 
+#ifdef CONFIG_AMLOGIC_MODIFY
+static void __init async_param_sysfs_builtin(void *data, async_cookie_t cookie)
+{
+	param_sysfs_builtin();
+}
+#endif
+
 /*
  * param_sysfs_init - wrapper for built-in params support
  */
+#ifdef CONFIG_AMLOGIC_MODIFY
+static async_cookie_t populate_initrootfs_cookie;
+#endif
 static int __init param_sysfs_init(void)
 {
 	module_kset = kset_create_and_add("module", &module_uevent_ops, NULL);
@@ -968,10 +966,16 @@ static int __init param_sysfs_init(void)
 		return -ENOMEM;
 	}
 	module_sysfs_initialized = 1;
-
 	version_sysfs_builtin();
+#ifdef CONFIG_AMLOGIC_MODIFY
+	pr_info("async_long_initcall = %d\n", async_long_initcall);
+	if (!async_long_initcall)
+		param_sysfs_builtin();
+	else if (async_long_initcall)
+		populate_initrootfs_cookie = async_schedule(async_param_sysfs_builtin, NULL);
+#else
 	param_sysfs_builtin();
-
+#endif
 	return 0;
 }
 subsys_initcall(param_sysfs_init);

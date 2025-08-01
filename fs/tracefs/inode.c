@@ -22,7 +22,7 @@
 #include <linux/magic.h>
 #include <linux/slab.h>
 
-#define TRACEFS_DEFAULT_MODE	0700
+#define TRACEFS_DEFAULT_MODE	0755
 
 static struct vfsmount *tracefs_mount;
 static int tracefs_mount_count;
@@ -139,8 +139,6 @@ struct tracefs_mount_opts {
 	kuid_t uid;
 	kgid_t gid;
 	umode_t mode;
-	/* Opt_* bitfield. */
-	unsigned int opts;
 };
 
 enum {
@@ -241,7 +239,6 @@ static int tracefs_parse_options(char *data, struct tracefs_mount_opts *opts)
 	kgid_t gid;
 	char *p;
 
-	opts->opts = 0;
 	opts->mode = TRACEFS_DEFAULT_MODE;
 
 	while ((p = strsep(&data, ",")) != NULL) {
@@ -276,36 +273,24 @@ static int tracefs_parse_options(char *data, struct tracefs_mount_opts *opts)
 		 * but traditionally tracefs has ignored all mount options
 		 */
 		}
-
-		opts->opts |= BIT(token);
 	}
 
 	return 0;
 }
 
-static int tracefs_apply_options(struct super_block *sb, bool remount)
+static int tracefs_apply_options(struct super_block *sb)
 {
 	struct tracefs_fs_info *fsi = sb->s_fs_info;
 	struct inode *inode = sb->s_root->d_inode;
 	struct tracefs_mount_opts *opts = &fsi->mount_opts;
 
-	/*
-	 * On remount, only reset mode/uid/gid if they were provided as mount
-	 * options.
-	 */
+	inode->i_mode &= ~S_IALLUGO;
+	inode->i_mode |= opts->mode;
 
-	if (!remount || opts->opts & BIT(Opt_mode)) {
-		inode->i_mode &= ~S_IALLUGO;
-		inode->i_mode |= opts->mode;
-	}
+	inode->i_uid = opts->uid;
 
-	if (!remount || opts->opts & BIT(Opt_uid))
-		inode->i_uid = opts->uid;
-
-	if (!remount || opts->opts & BIT(Opt_gid)) {
-		/* Set all the group ids to the mount option */
-		set_gid(sb->s_root, opts->gid);
-	}
+	/* Set all the group ids to the mount option */
+	set_gid(sb->s_root, opts->gid);
 
 	return 0;
 }
@@ -320,7 +305,7 @@ static int tracefs_remount(struct super_block *sb, int *flags, char *data)
 	if (err)
 		goto fail;
 
-	tracefs_apply_options(sb, true);
+	tracefs_apply_options(sb);
 
 fail:
 	return err;
@@ -372,7 +357,7 @@ static int trace_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_op = &tracefs_super_operations;
 
-	tracefs_apply_options(sb, false);
+	tracefs_apply_options(sb);
 
 	return 0;
 
@@ -517,8 +502,7 @@ static struct dentry *__create_dir(const char *name, struct dentry *parent,
 	if (unlikely(!inode))
 		return failed_creating(dentry);
 
-	/* Do not set bits for OTH */
-	inode->i_mode = S_IFDIR | S_IRWXU | S_IRUSR| S_IRGRP | S_IXUSR | S_IXGRP;
+	inode->i_mode = S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO;
 	inode->i_op = ops;
 	inode->i_fop = &simple_dir_operations;
 	inode->i_uid = d_inode(dentry->d_parent)->i_uid;
@@ -551,9 +535,6 @@ static struct dentry *__create_dir(const char *name, struct dentry *parent,
  */
 struct dentry *tracefs_create_dir(const char *name, struct dentry *parent)
 {
-	if (security_locked_down(LOCKDOWN_TRACEFS))
-		return NULL;
-
 	return __create_dir(name, parent, &simple_dir_inode_operations);
 }
 

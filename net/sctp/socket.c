@@ -68,11 +68,10 @@
 #include <net/sctp/stream_sched.h>
 
 /* Forward declarations for internal helper functions. */
-static bool sctp_writeable(const struct sock *sk);
+static bool sctp_writeable(struct sock *sk);
 static void sctp_wfree(struct sk_buff *skb);
-static int sctp_wait_for_sndbuf(struct sctp_association *asoc,
-				struct sctp_transport *transport,
-				long *timeo_p, size_t msg_len);
+static int sctp_wait_for_sndbuf(struct sctp_association *asoc, long *timeo_p,
+				size_t msg_len);
 static int sctp_wait_for_packet(struct sock *sk, int *err, long *timeo_p);
 static int sctp_wait_for_connect(struct sctp_association *, long *timeo_p);
 static int sctp_wait_for_accept(struct sock *sk, long timeo);
@@ -98,7 +97,7 @@ struct percpu_counter sctp_sockets_allocated;
 
 static void sctp_enter_memory_pressure(struct sock *sk)
 {
-	WRITE_ONCE(sctp_memory_pressure, 1);
+	sctp_memory_pressure = 1;
 }
 
 
@@ -139,7 +138,7 @@ static inline void sctp_set_owner_w(struct sctp_chunk *chunk)
 
 	refcount_add(sizeof(struct sctp_chunk), &sk->sk_wmem_alloc);
 	asoc->sndbuf_used += chunk->skb->truesize + sizeof(struct sctp_chunk);
-	sk_wmem_queued_add(sk, chunk->skb->truesize + sizeof(struct sctp_chunk));
+	sk->sk_wmem_queued += chunk->skb->truesize + sizeof(struct sctp_chunk);
 	sk_mem_charge(sk, chunk->skb->truesize);
 }
 
@@ -363,9 +362,9 @@ static void sctp_auto_asconf_init(struct sctp_sock *sp)
 	struct net *net = sock_net(&sp->inet.sk);
 
 	if (net->sctp.default_auto_asconf) {
-		spin_lock_bh(&net->sctp.addr_wq_lock);
+		spin_lock(&net->sctp.addr_wq_lock);
 		list_add_tail(&sp->auto_asconf_list, &net->sctp.auto_asconf_splist);
-		spin_unlock_bh(&net->sctp.addr_wq_lock);
+		spin_unlock(&net->sctp.addr_wq_lock);
 		sp->do_auto_asconf = 1;
 	}
 }
@@ -411,6 +410,9 @@ static int sctp_do_bind(struct sock *sk, union sctp_addr *addr, int len)
 			return -EINVAL;
 		}
 	}
+
+	if (snum && inet_is_local_unbindable_port(net, snum))
+		return -EPERM;
 
 	if (snum && snum < inet_prot_sock(net) &&
 	    !ns_capable(net->user_ns, CAP_NET_BIND_SERVICE))
@@ -1091,6 +1093,8 @@ static int sctp_connect_new_asoc(struct sctp_endpoint *ep,
 		if (sctp_autobind(sk))
 			return -EAGAIN;
 	} else {
+		if (inet_is_local_unbindable_port(net, ep->base.bind_addr.port))
+			return -EPERM;
 		if (ep->base.bind_addr.port < inet_prot_sock(net) &&
 		    !ns_capable(net->user_ns, CAP_NET_BIND_SERVICE))
 			return -EACCES;
@@ -1554,12 +1558,9 @@ static void sctp_close(struct sock *sk, long timeout)
 
 	/* Supposedly, no process has access to the socket, but
 	 * the net layers still may.
-	 * Also, sctp_destroy_sock() needs to be called with addr_wq_lock
-	 * held and that should be grabbed before socket lock.
 	 */
-	spin_lock_bh(&net->sctp.addr_wq_lock);
-	bh_lock_sock_nested(sk);
-
+	local_bh_disable();
+	bh_lock_sock(sk);
 	/* Hold the sock, since sk_common_release() will put sock_put()
 	 * and we have just a little more cleanup.
 	 */
@@ -1567,8 +1568,7 @@ static void sctp_close(struct sock *sk, long timeout)
 	sk_common_release(sk);
 
 	bh_unlock_sock(sk);
-	spin_unlock_bh(&net->sctp.addr_wq_lock);
-
+	local_bh_enable();
 	sock_put(sk);
 
 	SCTP_DBG_OBJCNT_DEC(sock);
@@ -1848,13 +1848,9 @@ static int sctp_sendmsg_to_asoc(struct sctp_association *asoc,
 
 	if (sctp_wspace(asoc) <= 0 || !sk_wmem_schedule(sk, msg_len)) {
 		timeo = sock_sndtimeo(sk, msg->msg_flags & MSG_DONTWAIT);
-		err = sctp_wait_for_sndbuf(asoc, transport, &timeo, msg_len);
+		err = sctp_wait_for_sndbuf(asoc, &timeo, msg_len);
 		if (err)
 			goto err;
-		if (unlikely(sinfo->sinfo_stream >= asoc->stream.outcnt)) {
-			err = -EINVAL;
-			goto err;
-		}
 	}
 
 	if (sctp_state(asoc, CLOSED)) {
@@ -2487,7 +2483,6 @@ static int sctp_apply_peer_addr_params(struct sctp_paddrparams *params,
 			if (trans) {
 				trans->hbinterval =
 				    msecs_to_jiffies(params->spp_hbinterval);
-				sctp_transport_reset_hb_timer(trans);
 			} else if (asoc) {
 				asoc->hbinterval =
 				    msecs_to_jiffies(params->spp_hbinterval);
@@ -5159,7 +5154,9 @@ static void sctp_destroy_sock(struct sock *sk)
 
 	if (sp->do_auto_asconf) {
 		sp->do_auto_asconf = 0;
+		spin_lock_bh(&sock_net(sk)->sctp.addr_wq_lock);
 		list_del(&sp->auto_asconf_list);
+		spin_unlock_bh(&sock_net(sk)->sctp.addr_wq_lock);
 	}
 	sctp_endpoint_free(sp->ep);
 	local_bh_disable();
@@ -5169,17 +5166,13 @@ static void sctp_destroy_sock(struct sock *sk)
 }
 
 /* Triggered when there are no references on the socket anymore */
-static void sctp_destruct_common(struct sock *sk)
+static void sctp_destruct_sock(struct sock *sk)
 {
 	struct sctp_sock *sp = sctp_sk(sk);
 
 	/* Free up the HMAC transform. */
 	crypto_free_shash(sp->hmac);
-}
 
-static void sctp_destruct_sock(struct sock *sk)
-{
-	sctp_destruct_common(sk);
 	inet_sock_destruct(sk);
 }
 
@@ -5366,14 +5359,14 @@ int sctp_for_each_endpoint(int (*cb)(struct sctp_endpoint *, void *),
 			   void *p) {
 	int err = 0;
 	int hash = 0;
-	struct sctp_endpoint *ep;
+	struct sctp_ep_common *epb;
 	struct sctp_hashbucket *head;
 
 	for (head = sctp_ep_hashtable; hash < sctp_ep_hashsize;
 	     hash++, head++) {
 		read_lock_bh(&head->lock);
-		sctp_for_each_hentry(ep, &head->chain) {
-			err = cb(ep, p);
+		sctp_for_each_hentry(epb, &head->chain) {
+			err = cb(sctp_ep(epb), p);
 			if (err)
 				break;
 		}
@@ -7159,7 +7152,6 @@ static int sctp_getsockopt_assoc_ids(struct sock *sk, int len,
 	struct sctp_sock *sp = sctp_sk(sk);
 	struct sctp_association *asoc;
 	struct sctp_assoc_ids *ids;
-	size_t ids_size;
 	u32 num = 0;
 
 	if (sctp_style(sk, TCP))
@@ -7172,11 +7164,11 @@ static int sctp_getsockopt_assoc_ids(struct sock *sk, int len,
 		num++;
 	}
 
-	ids_size = struct_size(ids, gaids_assoc_id, num);
-	if (len < ids_size)
+	if (len < sizeof(struct sctp_assoc_ids) + sizeof(sctp_assoc_t) * num)
 		return -EINVAL;
 
-	len = ids_size;
+	len = sizeof(struct sctp_assoc_ids) + sizeof(sctp_assoc_t) * num;
+
 	ids = kmalloc(len, GFP_USER | __GFP_NOWARN);
 	if (unlikely(!ids))
 		return -ENOMEM;
@@ -8371,7 +8363,6 @@ static int sctp_listen_start(struct sock *sk, int backlog)
 	struct sctp_endpoint *ep = sp->ep;
 	struct crypto_shash *tfm = NULL;
 	char alg[32];
-	int err;
 
 	/* Allocate HMAC for generating cookie. */
 	if (!sp->hmac && sp->sctp_hmac_alg) {
@@ -8398,26 +8389,17 @@ static int sctp_listen_start(struct sock *sk, int backlog)
 	 */
 	inet_sk_set_state(sk, SCTP_SS_LISTENING);
 	if (!ep->base.bind_addr.port) {
-		if (sctp_autobind(sk)) {
-			err = -EAGAIN;
-			goto err;
-		}
+		if (sctp_autobind(sk))
+			return -EAGAIN;
 	} else {
 		if (sctp_get_port(sk, inet_sk(sk)->inet_num)) {
-			err = -EADDRINUSE;
-			goto err;
+			inet_sk_set_state(sk, SCTP_SS_CLOSED);
+			return -EADDRINUSE;
 		}
 	}
 
-	WRITE_ONCE(sk->sk_max_ack_backlog, backlog);
-	err = sctp_hash_endpoint(ep);
-	if (err)
-		goto err;
-
-	return 0;
-err:
-	inet_sk_set_state(sk, SCTP_SS_CLOSED);
-	return err;
+	sk->sk_max_ack_backlog = backlog;
+	return sctp_hash_endpoint(ep);
 }
 
 /*
@@ -8470,7 +8452,7 @@ int sctp_inet_listen(struct socket *sock, int backlog)
 
 	/* If we are already listening, just update the backlog */
 	if (sctp_sstate(sk, LISTENING))
-		WRITE_ONCE(sk->sk_max_ack_backlog, backlog);
+		sk->sk_max_ack_backlog = backlog;
 	else {
 		err = sctp_listen_start(sk, backlog);
 		if (err)
@@ -8946,8 +8928,7 @@ static void __sctp_write_space(struct sctp_association *asoc)
 		wq = rcu_dereference(sk->sk_wq);
 		if (wq) {
 			if (waitqueue_active(&wq->wait))
-				wake_up_interruptible_poll(&wq->wait, EPOLLOUT |
-						EPOLLWRNORM | EPOLLWRBAND);
+				wake_up_interruptible(&wq->wait);
 
 			/* Note that we try to include the Async I/O support
 			 * here by modeling from the current TCP/UDP code.
@@ -9011,7 +8992,7 @@ static void sctp_wfree(struct sk_buff *skb)
 	struct sock *sk = asoc->base.sk;
 
 	sk_mem_uncharge(sk, skb->truesize);
-	sk_wmem_queued_add(sk, -(skb->truesize + sizeof(struct sctp_chunk)));
+	sk->sk_wmem_queued -= skb->truesize + sizeof(struct sctp_chunk);
 	asoc->sndbuf_used -= skb->truesize + sizeof(struct sctp_chunk);
 	WARN_ON(refcount_sub_and_test(sizeof(struct sctp_chunk),
 				      &sk->sk_wmem_alloc));
@@ -9062,9 +9043,8 @@ void sctp_sock_rfree(struct sk_buff *skb)
 
 
 /* Helper function to wait for space in the sndbuf.  */
-static int sctp_wait_for_sndbuf(struct sctp_association *asoc,
-				struct sctp_transport *transport,
-				long *timeo_p, size_t msg_len)
+static int sctp_wait_for_sndbuf(struct sctp_association *asoc, long *timeo_p,
+				size_t msg_len)
 {
 	struct sock *sk = asoc->base.sk;
 	long current_timeo = *timeo_p;
@@ -9074,9 +9054,7 @@ static int sctp_wait_for_sndbuf(struct sctp_association *asoc,
 	pr_debug("%s: asoc:%p, timeo:%ld, msg_len:%zu\n", __func__, asoc,
 		 *timeo_p, msg_len);
 
-	/* Increment the transport and association's refcnt. */
-	if (transport)
-		sctp_transport_hold(transport);
+	/* Increment the association's refcnt.  */
 	sctp_association_hold(asoc);
 
 	/* Wait on the association specific sndbuf space. */
@@ -9085,7 +9063,7 @@ static int sctp_wait_for_sndbuf(struct sctp_association *asoc,
 					  TASK_INTERRUPTIBLE);
 		if (asoc->base.dead)
 			goto do_dead;
-		if ((!*timeo_p) || (transport && transport->dead))
+		if (!*timeo_p)
 			goto do_nonblock;
 		if (sk->sk_err || asoc->state >= SCTP_STATE_SHUTDOWN_PENDING)
 			goto do_error;
@@ -9112,9 +9090,7 @@ static int sctp_wait_for_sndbuf(struct sctp_association *asoc,
 out:
 	finish_wait(&asoc->wait, &wait);
 
-	/* Release the transport and association's refcnt. */
-	if (transport)
-		sctp_transport_put(transport);
+	/* Release the association's refcnt.  */
 	sctp_association_put(asoc);
 
 	return err;
@@ -9171,9 +9147,9 @@ void sctp_write_space(struct sock *sk)
  * UDP-style sockets or TCP-style sockets, this code should work.
  *  - Daisy
  */
-static bool sctp_writeable(const struct sock *sk)
+static bool sctp_writeable(struct sock *sk)
 {
-	return READ_ONCE(sk->sk_sndbuf) > READ_ONCE(sk->sk_wmem_queued);
+	return sk->sk_sndbuf > sk->sk_wmem_queued;
 }
 
 /* Wait for an association to go into ESTABLISHED state. If timeout is 0,
@@ -9331,7 +9307,7 @@ void sctp_copy_sock(struct sock *newsk, struct sock *sk,
 	sctp_sk(newsk)->reuse = sp->reuse;
 
 	newsk->sk_shutdown = sk->sk_shutdown;
-	newsk->sk_destruct = sk->sk_destruct;
+	newsk->sk_destruct = sctp_destruct_sock;
 	newsk->sk_family = sk->sk_family;
 	newsk->sk_protocol = IPPROTO_SCTP;
 	newsk->sk_backlog_rcv = sk->sk_prot->backlog_rcv;
@@ -9562,20 +9538,11 @@ struct proto sctp_prot = {
 
 #if IS_ENABLED(CONFIG_IPV6)
 
-static void sctp_v6_destruct_sock(struct sock *sk)
+#include <net/transp_v6.h>
+static void sctp_v6_destroy_sock(struct sock *sk)
 {
-	sctp_destruct_common(sk);
-	inet6_sock_destruct(sk);
-}
-
-static int sctp_v6_init_sock(struct sock *sk)
-{
-	int ret = sctp_init_sock(sk);
-
-	if (!ret)
-		sk->sk_destruct = sctp_v6_destruct_sock;
-
-	return ret;
+	sctp_destroy_sock(sk);
+	inet6_destroy_sock(sk);
 }
 
 struct proto sctpv6_prot = {
@@ -9585,8 +9552,8 @@ struct proto sctpv6_prot = {
 	.disconnect	= sctp_disconnect,
 	.accept		= sctp_accept,
 	.ioctl		= sctp_ioctl,
-	.init		= sctp_v6_init_sock,
-	.destroy	= sctp_destroy_sock,
+	.init		= sctp_init_sock,
+	.destroy	= sctp_v6_destroy_sock,
 	.shutdown	= sctp_shutdown,
 	.setsockopt	= sctp_setsockopt,
 	.getsockopt	= sctp_getsockopt,

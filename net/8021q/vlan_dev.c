@@ -27,11 +27,6 @@
 #include <linux/phy.h>
 #include <net/arp.h>
 
-#if IS_ENABLED(CONFIG_NF_FLOW_TABLE)
-#include <linux/netfilter.h>
-#include <net/netfilter/nf_flow_table.h>
-#endif
-
 #include "vlan.h"
 #include "vlanproc.h"
 #include <linux/if_vlan.h>
@@ -114,8 +109,8 @@ static netdev_tx_t vlan_dev_hard_start_xmit(struct sk_buff *skb,
 	 * NOTE: THIS ASSUMES DIX ETHERNET, SPECIFICALLY NOT SUPPORTING
 	 * OTHER THINGS LIKE FDDI/TokenRing/802.3 SNAPs...
 	 */
-	if (vlan->flags & VLAN_FLAG_REORDER_HDR ||
-	    veth->h_vlan_proto != vlan->vlan_proto) {
+	if (veth->h_vlan_proto != vlan->vlan_proto ||
+	    vlan->flags & VLAN_FLAG_REORDER_HDR) {
 		u16 vlan_tci;
 		vlan_tci = vlan->vlan_id;
 		vlan_tci |= vlan_dev_get_egress_qos_mask(dev, skb->priority);
@@ -278,6 +273,17 @@ static int vlan_dev_open(struct net_device *dev)
 			goto out;
 	}
 
+	if (dev->flags & IFF_ALLMULTI) {
+		err = dev_set_allmulti(real_dev, 1);
+		if (err < 0)
+			goto del_unicast;
+	}
+	if (dev->flags & IFF_PROMISC) {
+		err = dev_set_promiscuity(real_dev, 1);
+		if (err < 0)
+			goto clear_allmulti;
+	}
+
 	ether_addr_copy(vlan->real_dev_addr, real_dev->dev_addr);
 
 	if (vlan->flags & VLAN_FLAG_GVRP)
@@ -291,6 +297,12 @@ static int vlan_dev_open(struct net_device *dev)
 		netif_carrier_on(dev);
 	return 0;
 
+clear_allmulti:
+	if (dev->flags & IFF_ALLMULTI)
+		dev_set_allmulti(real_dev, -1);
+del_unicast:
+	if (!ether_addr_equal(dev->dev_addr, real_dev->dev_addr))
+		dev_uc_del(real_dev, dev->dev_addr);
 out:
 	netif_carrier_off(dev);
 	return err;
@@ -303,6 +315,10 @@ static int vlan_dev_stop(struct net_device *dev)
 
 	dev_mc_unsync(real_dev, dev);
 	dev_uc_unsync(real_dev, dev);
+	if (dev->flags & IFF_ALLMULTI)
+		dev_set_allmulti(real_dev, -1);
+	if (dev->flags & IFF_PROMISC)
+		dev_set_promiscuity(real_dev, -1);
 
 	if (!ether_addr_equal(dev->dev_addr, real_dev->dev_addr))
 		dev_uc_del(real_dev, dev->dev_addr);
@@ -350,7 +366,7 @@ static int vlan_dev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 
 	switch (cmd) {
 	case SIOCSHWTSTAMP:
-		if (!net_eq(dev_net(dev), dev_net(real_dev)))
+		if (!net_eq(dev_net(dev), &init_net))
 			break;
 		/* fall through */
 	case SIOCGMIIPHY:
@@ -459,10 +475,12 @@ static void vlan_dev_change_rx_flags(struct net_device *dev, int change)
 {
 	struct net_device *real_dev = vlan_dev_priv(dev)->real_dev;
 
-	if (change & IFF_ALLMULTI)
-		dev_set_allmulti(real_dev, dev->flags & IFF_ALLMULTI ? 1 : -1);
-	if (change & IFF_PROMISC)
-		dev_set_promiscuity(real_dev, dev->flags & IFF_PROMISC ? 1 : -1);
+	if (dev->flags & IFF_UP) {
+		if (change & IFF_ALLMULTI)
+			dev_set_allmulti(real_dev, dev->flags & IFF_ALLMULTI ? 1 : -1);
+		if (change & IFF_PROMISC)
+			dev_set_promiscuity(real_dev, dev->flags & IFF_PROMISC ? 1 : -1);
+	}
 }
 
 static void vlan_dev_set_rx_mode(struct net_device *vlan_dev)
@@ -572,7 +590,7 @@ static int vlan_dev_init(struct net_device *dev)
 }
 
 /* Note: this function might be called multiple times for the same device. */
-void vlan_dev_free_egress_priority(const struct net_device *dev)
+void vlan_dev_uninit(struct net_device *dev)
 {
 	struct vlan_priority_tci_mapping *pm;
 	struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
@@ -584,16 +602,6 @@ void vlan_dev_free_egress_priority(const struct net_device *dev)
 			kfree(pm);
 		}
 	}
-}
-
-static void vlan_dev_uninit(struct net_device *dev)
-{
-	struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
-
-	vlan_dev_free_egress_priority(dev);
-
-	/* Get rid of the vlan's reference to real_dev */
-	dev_put(vlan->real_dev);
 }
 
 static netdev_features_t vlan_dev_fix_features(struct net_device *dev,
@@ -739,27 +747,6 @@ static int vlan_dev_get_iflink(const struct net_device *dev)
 	return real_dev->ifindex;
 }
 
-#if IS_ENABLED(CONFIG_NF_FLOW_TABLE)
-static int vlan_dev_flow_offload_check(struct flow_offload_hw_path *path)
-{
-	struct net_device *dev = path->dev;
-	struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
-
-	if (path->flags & FLOW_OFFLOAD_PATH_VLAN)
-		return -EEXIST;
-
-	path->flags |= FLOW_OFFLOAD_PATH_VLAN;
-	path->vlan_proto = vlan->vlan_proto;
-	path->vlan_id = vlan->vlan_id;
-	path->dev = vlan->real_dev;
-
-	if (vlan->real_dev->netdev_ops->ndo_flow_offload_check)
-		return vlan->real_dev->netdev_ops->ndo_flow_offload_check(path);
-
-	return 0;
-}
-#endif /* CONFIG_NF_FLOW_TABLE */
-
 static const struct ethtool_ops vlan_ethtool_ops = {
 	.get_link_ksettings	= vlan_ethtool_get_link_ksettings,
 	.get_drvinfo	        = vlan_ethtool_get_drvinfo,
@@ -798,9 +785,6 @@ static const struct net_device_ops vlan_netdev_ops = {
 #endif
 	.ndo_fix_features	= vlan_dev_fix_features,
 	.ndo_get_iflink		= vlan_dev_get_iflink,
-#if IS_ENABLED(CONFIG_NF_FLOW_TABLE)
-	.ndo_flow_offload_check = vlan_dev_flow_offload_check,
-#endif
 };
 
 static void vlan_dev_free(struct net_device *dev)
@@ -809,6 +793,9 @@ static void vlan_dev_free(struct net_device *dev)
 
 	free_percpu(vlan->vlan_pcpu_stats);
 	vlan->vlan_pcpu_stats = NULL;
+
+	/* Get rid of the vlan's reference to real_dev */
+	dev_put(vlan->real_dev);
 }
 
 void vlan_setup(struct net_device *dev)

@@ -275,9 +275,8 @@ static int cdn_dp_connector_get_modes(struct drm_connector *connector)
 	return ret;
 }
 
-static enum drm_mode_status
-cdn_dp_connector_mode_valid(struct drm_connector *connector,
-			    struct drm_display_mode *mode)
+static int cdn_dp_connector_mode_valid(struct drm_connector *connector,
+				       struct drm_display_mode *mode)
 {
 	struct cdn_dp_device *dp = connector_to_dp(connector);
 	struct drm_display_info *display_info = &dp->connector.display_info;
@@ -563,7 +562,7 @@ static void cdn_dp_encoder_mode_set(struct drm_encoder *encoder,
 	video->v_sync_polarity = !!(mode->flags & DRM_MODE_FLAG_NVSYNC);
 	video->h_sync_polarity = !!(mode->flags & DRM_MODE_FLAG_NHSYNC);
 
-	drm_mode_copy(&dp->mode, adjusted);
+	memcpy(&dp->mode, adjusted, sizeof(*mode));
 }
 
 static bool cdn_dp_check_link_status(struct cdn_dp_device *dp)
@@ -1147,7 +1146,6 @@ static int cdn_dp_probe(struct platform_device *pdev)
 	struct cdn_dp_device *dp;
 	struct extcon_dev *extcon;
 	struct phy *phy;
-	int ret;
 	int i;
 
 	dp = devm_kzalloc(dev, sizeof(*dp), GFP_KERNEL);
@@ -1188,19 +1186,9 @@ static int cdn_dp_probe(struct platform_device *pdev)
 	mutex_init(&dp->lock);
 	dev_set_drvdata(dev, dp);
 
-	ret = cdn_dp_audio_codec_init(dp, dev);
-	if (ret)
-		return ret;
+	cdn_dp_audio_codec_init(dp, dev);
 
-	ret = component_add(dev, &cdn_dp_component_ops);
-	if (ret)
-		goto err_audio_deinit;
-
-	return 0;
-
-err_audio_deinit:
-	platform_device_unregister(dp->audio_pdev);
-	return ret;
+	return component_add(dev, &cdn_dp_component_ops);
 }
 
 static int cdn_dp_remove(struct platform_device *pdev)

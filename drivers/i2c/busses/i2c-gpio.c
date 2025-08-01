@@ -312,8 +312,6 @@ static void of_i2c_gpio_get_props(struct device_node *np,
 
 	pdata->sda_is_open_drain =
 		of_property_read_bool(np, "i2c-gpio,sda-open-drain");
-	pdata->sda_is_output_only =
-		of_property_read_bool(np, "i2c-gpio,sda-output-only");
 	pdata->scl_is_open_drain =
 		of_property_read_bool(np, "i2c-gpio,scl-open-drain");
 	pdata->scl_is_output_only =
@@ -365,7 +363,6 @@ static int i2c_gpio_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	enum gpiod_flags gflags;
-	bool sda_scl_output_only;
 	int ret;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
@@ -394,12 +391,8 @@ static int i2c_gpio_probe(struct platform_device *pdev)
 	 * marking these lines to be handled as open drain, and we should just
 	 * handle them as we handle any other output. Else we enforce open
 	 * drain as this is required for an I2C bus.
-	 * If SCL/SDA both are write-only, then this indicates I2C-like slaves
-	 * with read-only SCL/SDA. Such slaves don't need open-drain, and partially
-	 * don't even work with open-drain.
 	 */
-	sda_scl_output_only = pdata->sda_is_output_only && pdata->scl_is_output_only;
-	if (pdata->sda_is_open_drain || sda_scl_output_only)
+	if (pdata->sda_is_open_drain)
 		gflags = GPIOD_OUT_HIGH;
 	else
 		gflags = GPIOD_OUT_HIGH_OPEN_DRAIN;
@@ -407,7 +400,7 @@ static int i2c_gpio_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->sda))
 		return PTR_ERR(priv->sda);
 
-	if (pdata->scl_is_open_drain || sda_scl_output_only)
+	if (pdata->scl_is_open_drain)
 		gflags = GPIOD_OUT_HIGH;
 	else
 		gflags = GPIOD_OUT_HIGH_OPEN_DRAIN;
@@ -425,8 +418,7 @@ static int i2c_gpio_probe(struct platform_device *pdev)
 
 	if (!pdata->scl_is_output_only)
 		bit_data->getscl = i2c_gpio_getscl;
-	if (!pdata->sda_is_output_only)
-		bit_data->getsda = i2c_gpio_getsda;
+	bit_data->getsda = i2c_gpio_getsda;
 
 	if (pdata->udelay)
 		bit_data->udelay = pdata->udelay;
@@ -444,7 +436,7 @@ static int i2c_gpio_probe(struct platform_device *pdev)
 
 	adap->owner = THIS_MODULE;
 	if (np)
-		strscpy(adap->name, dev_name(dev), sizeof(adap->name));
+		strlcpy(adap->name, dev_name(dev), sizeof(adap->name));
 	else
 		snprintf(adap->name, sizeof(adap->name), "i2c-gpio%d", pdev->id);
 
@@ -528,5 +520,5 @@ module_exit(i2c_gpio_exit);
 
 MODULE_AUTHOR("Haavard Skinnemoen (Atmel)");
 MODULE_DESCRIPTION("Platform-independent bitbanging I2C driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:i2c-gpio");

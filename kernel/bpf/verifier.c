@@ -1469,12 +1469,7 @@ static int backtrack_insn(struct bpf_verifier_env *env, int idx,
 	if (class == BPF_ALU || class == BPF_ALU64) {
 		if (!(*reg_mask & dreg))
 			return 0;
-		if (opcode == BPF_END || opcode == BPF_NEG) {
-			/* sreg is reserved and unused
-			 * dreg still need precision before this insn
-			 */
-			return 0;
-		} else if (opcode == BPF_MOV) {
+		if (opcode == BPF_MOV) {
 			if (BPF_SRC(insn->code) == BPF_X) {
 				/* dreg = sreg
 				 * dreg needs precision after this insn
@@ -1568,21 +1563,6 @@ static int backtrack_insn(struct bpf_verifier_env *env, int idx,
 			}
 		} else if (opcode == BPF_EXIT) {
 			return -ENOTSUPP;
-		} else if (BPF_SRC(insn->code) == BPF_X) {
-			if (!(*reg_mask & (dreg | sreg)))
-				return 0;
-			/* dreg <cond> sreg
-			 * Both dreg and sreg need precision before
-			 * this insn. If only sreg was marked precise
-			 * before it would be equally necessary to
-			 * propagate it to dreg.
-			 */
-			*reg_mask |= (sreg | dreg);
-			 /* else dreg <cond> K
-			  * Only dreg still needs precision before
-			  * this insn, so for the K-based conditional
-			  * there is nothing new to be marked.
-			  */
 		}
 	} else if (class == BPF_LD) {
 		if (!(*reg_mask & dreg))
@@ -1944,9 +1924,7 @@ static int check_stack_write(struct bpf_verifier_env *env,
 		bool sanitize = reg && is_spillable_regtype(reg->type);
 
 		for (i = 0; i < size; i++) {
-			u8 type = state->stack[spi].slot_type[i];
-
-			if (type != STACK_MISC && type != STACK_ZERO) {
+			if (state->stack[spi].slot_type[i] == STACK_INVALID) {
 				sanitize = true;
 				break;
 			}
@@ -2687,7 +2665,7 @@ continue_func:
 	goto continue_func;
 }
 
-#ifndef CONFIG_BPF_JIT_ALWAYS_ON
+#ifndef CONFIG_BPF_JIT_ALWAYS_ON_AMLOGIC
 static int get_callee_stack_depth(struct bpf_verifier_env *env,
 				  const struct bpf_insn *insn, int idx)
 {
@@ -5162,11 +5140,6 @@ static int adjust_reg_min_max_vals(struct bpf_verifier_env *env,
 				return err;
 			return adjust_ptr_min_max_vals(env, insn,
 						       dst_reg, src_reg);
-		} else if (dst_reg->precise) {
-			/* if dst_reg is precise, src_reg should be precise as well */
-			err = mark_chain_precision(env, insn->src_reg);
-			if (err)
-				return err;
 		}
 	} else {
 		/* Pretend the src is a reg with a known value, since we only
@@ -8971,7 +8944,7 @@ static int convert_ctx_accesses(struct bpf_verifier_env *env)
 					insn_buf[cnt++] = BPF_ALU64_IMM(BPF_RSH,
 									insn->dst_reg,
 									shift);
-				insn_buf[cnt++] = BPF_ALU32_IMM(BPF_AND, insn->dst_reg,
+				insn_buf[cnt++] = BPF_ALU64_IMM(BPF_AND, insn->dst_reg,
 								(1ULL << size * 8) - 1);
 			}
 		}
@@ -9166,7 +9139,7 @@ out_undo_insn:
 
 static int fixup_call_args(struct bpf_verifier_env *env)
 {
-#ifndef CONFIG_BPF_JIT_ALWAYS_ON
+#ifndef CONFIG_BPF_JIT_ALWAYS_ON_AMLOGIC
 	struct bpf_prog *prog = env->prog;
 	struct bpf_insn *insn = prog->insnsi;
 	int i, depth;
@@ -9181,7 +9154,7 @@ static int fixup_call_args(struct bpf_verifier_env *env)
 		if (err == -EFAULT)
 			return err;
 	}
-#ifndef CONFIG_BPF_JIT_ALWAYS_ON
+#ifndef CONFIG_BPF_JIT_ALWAYS_ON_AMLOGIC
 	for (i = 0; i < prog->len; i++, insn++) {
 		if (insn->code != (BPF_JMP | BPF_CALL) ||
 		    insn->src_reg != BPF_PSEUDO_CALL)
@@ -9558,7 +9531,7 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr,
 	/* 'struct bpf_verifier_env' can be global, but since it's not small,
 	 * allocate/free it every time bpf_check() is called
 	 */
-	env = kvzalloc(sizeof(struct bpf_verifier_env), GFP_KERNEL);
+	env = kzalloc(sizeof(struct bpf_verifier_env), GFP_KERNEL);
 	if (!env)
 		return -ENOMEM;
 	log = &env->log;
@@ -9728,6 +9701,6 @@ err_unlock:
 		mutex_unlock(&bpf_verifier_lock);
 	vfree(env->insn_aux_data);
 err_free_env:
-	kvfree(env);
+	kfree(env);
 	return ret;
 }

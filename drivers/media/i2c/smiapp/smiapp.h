@@ -208,6 +208,9 @@ struct smiapp_sensor {
 	bool dev_init_done;
 	u8 compressed_min_bpp;
 
+	u8 *nvm;		/* nvm memory buffer */
+	unsigned int nvm_size;	/* bytes */
+
 	struct smiapp_module_info minfo;
 
 	struct smiapp_pll pll;

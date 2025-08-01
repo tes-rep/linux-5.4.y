@@ -1448,8 +1448,7 @@ found:
 		}
 		if (fa->fa_tos && fa->fa_tos != flp->flowi4_tos)
 			continue;
-		/* Paired with WRITE_ONCE() in fib_release_info() */
-		if (READ_ONCE(fi->fib_dead))
+		if (fi->fib_dead)
 			continue;
 		if (fa->fa_info->fib_scope < flp->flowi4_scope)
 			continue;
@@ -2597,7 +2596,6 @@ static const char *const rtn_type_names[__RTN_MAX] = {
 	[RTN_THROW] = "THROW",
 	[RTN_NAT] = "NAT",
 	[RTN_XRESOLVE] = "XRESOLVE",
-	[RTN_POLICY_FAILED] = "POLICY_FAILED",
 };
 
 static inline const char *rtn_type(char *buf, size_t len, unsigned int t)

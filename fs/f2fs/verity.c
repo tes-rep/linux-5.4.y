@@ -29,6 +29,8 @@
 #include "f2fs.h"
 #include "xattr.h"
 
+#define F2FS_VERIFY_VER	(1)
+
 static inline loff_t f2fs_verity_metadata_pos(const struct inode *inode)
 {
 	return round_up(inode->i_size, 65536);
@@ -45,13 +47,16 @@ static int pagecache_read(struct inode *inode, void *buf, size_t count,
 		size_t n = min_t(size_t, count,
 				 PAGE_SIZE - offset_in_page(pos));
 		struct page *page;
+		void *addr;
 
 		page = read_mapping_page(inode->i_mapping, pos >> PAGE_SHIFT,
 					 NULL);
 		if (IS_ERR(page))
 			return PTR_ERR(page);
 
-		memcpy_from_page(buf, page, offset_in_page(pos), n);
+		addr = kmap_atomic(page);
+		memcpy(buf, addr + offset_in_page(pos), n);
+		kunmap_atomic(addr);
 
 		put_page(page);
 
@@ -76,7 +81,8 @@ static int pagecache_write(struct inode *inode, const void *buf, size_t count,
 		size_t n = min_t(size_t, count,
 				 PAGE_SIZE - offset_in_page(pos));
 		struct page *page;
-		void *fsdata = NULL;
+		void *fsdata;
+		void *addr;
 		int res;
 
 		res = pagecache_write_begin(NULL, inode->i_mapping, pos, n, 0,
@@ -84,7 +90,9 @@ static int pagecache_write(struct inode *inode, const void *buf, size_t count,
 		if (res)
 			return res;
 
-		memcpy_to_page(page, offset_in_page(pos), buf, n);
+		addr = kmap_atomic(page);
+		memcpy(addr + offset_in_page(pos), buf, n);
+		kunmap_atomic(addr);
 
 		res = pagecache_write_end(NULL, inode->i_mapping, pos, n, n,
 					  page, fsdata);
@@ -147,7 +155,7 @@ static int f2fs_end_enable_verity(struct file *filp, const void *desc,
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	u64 desc_pos = f2fs_verity_metadata_pos(inode) + merkle_tree_size;
 	struct fsverity_descriptor_location dloc = {
-		.version = cpu_to_le32(1),
+		.version = cpu_to_le32(F2FS_VERIFY_VER),
 		.size = cpu_to_le32(desc_size),
 		.pos = cpu_to_le64(desc_pos),
 	};
@@ -226,7 +234,7 @@ static int f2fs_get_verity_descriptor(struct inode *inode, void *buf,
 			    F2FS_XATTR_NAME_VERITY, &dloc, sizeof(dloc), NULL);
 	if (res < 0 && res != -ERANGE)
 		return res;
-	if (res != sizeof(dloc) || dloc.version != cpu_to_le32(1)) {
+	if (res != sizeof(dloc) || dloc.version != cpu_to_le32(F2FS_VERIFY_VER)) {
 		f2fs_warn(F2FS_I_SB(inode), "unknown verity xattr format");
 		return -EINVAL;
 	}
@@ -249,12 +257,55 @@ static int f2fs_get_verity_descriptor(struct inode *inode, void *buf,
 	return size;
 }
 
-static struct page *f2fs_read_merkle_tree_page(struct inode *inode,
-					       pgoff_t index)
+/*
+ * Prefetch some pages from the file's Merkle tree.
+ *
+ * This is basically a stripped-down version of __do_page_cache_readahead()
+ * which works on pages past i_size.
+ */
+static void f2fs_merkle_tree_readahead(struct address_space *mapping,
+				       pgoff_t start_index, unsigned long count)
 {
+	LIST_HEAD(pages);
+	unsigned int nr_pages = 0;
+	struct page *page;
+	pgoff_t index;
+	struct blk_plug plug;
+
+	for (index = start_index; index < start_index + count; index++) {
+		page = xa_load(&mapping->i_pages, index);
+		if (!page || xa_is_value(page)) {
+			page = __page_cache_alloc(readahead_gfp_mask(mapping));
+			if (!page)
+				break;
+			page->index = index;
+			list_add(&page->lru, &pages);
+			nr_pages++;
+		}
+	}
+	blk_start_plug(&plug);
+	f2fs_mpage_readpages(mapping, &pages, NULL, nr_pages, true);
+	blk_finish_plug(&plug);
+}
+
+static struct page *f2fs_read_merkle_tree_page(struct inode *inode,
+					       pgoff_t index,
+					       unsigned long num_ra_pages)
+{
+	struct page *page;
+
 	index += f2fs_verity_metadata_pos(inode) >> PAGE_SHIFT;
 
-	return read_mapping_page(inode->i_mapping, index, NULL);
+	page = find_get_page_flags(inode->i_mapping, index, FGP_ACCESSED);
+	if (!page || !PageUptodate(page)) {
+		if (page)
+			put_page(page);
+		else if (num_ra_pages > 1)
+			f2fs_merkle_tree_readahead(inode->i_mapping, index,
+						   num_ra_pages);
+		page = read_mapping_page(inode->i_mapping, index, NULL);
+	}
+	return page;
 }
 
 static int f2fs_write_merkle_tree_block(struct inode *inode, const void *buf,

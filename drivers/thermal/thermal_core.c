@@ -381,15 +381,26 @@ static void handle_critical_trips(struct thermal_zone_device *tz,
 
 	tz->ops->get_trip_temp(tz, trip, &trip_temp);
 
-	/* If we have not crossed the trip_temp, we do not care. */
+#ifndef CONFIG_AMLOGIC_MODIFY
+	/* If we have not crossed the trip_temp, we do not care.
+	 * for meson chip cpucore or gpucore cooling devices.
+	 * core binding control trippoint but trigger by hot type.
+	 * so cannot return.
+	 */
 	if (trip_temp <= 0 || tz->temperature < trip_temp)
 		return;
+#endif
 
 	trace_thermal_zone_trip(tz, trip, trip_type);
 
 	if (tz->ops->notify)
 		tz->ops->notify(tz, trip, trip_type);
 
+#ifdef CONFIG_AMLOGIC_MODIFY
+	/* If we have not crossed the trip_temp, we do not care. */
+	if (trip_temp <= 0 || tz->temperature < trip_temp)
+		return;
+#endif
 	if (trip_type == THERMAL_TRIP_CRITICAL) {
 		dev_emerg(&tz->device,
 			  "critical temperature reached (%d C), shutting down\n",
@@ -601,6 +612,11 @@ int power_actor_set_power(struct thermal_cooling_device *cdev,
 	if (ret)
 		return ret;
 
+#ifdef CONFIG_AMLOGIC_MODIFY
+	if (state > instance->upper)
+		state = instance->upper;
+#endif
+
 	instance->target = state;
 	mutex_lock(&cdev->lock);
 	cdev->updated = false;
@@ -740,8 +756,7 @@ int thermal_zone_bind_cooling_device(struct thermal_zone_device *tz,
 	if (result)
 		goto release_ida;
 
-	snprintf(dev->attr_name, sizeof(dev->attr_name), "cdev%d_trip_point",
-		 dev->id);
+	sprintf(dev->attr_name, "cdev%d_trip_point", dev->id);
 	sysfs_attr_init(&dev->attr.attr);
 	dev->attr.attr.name = dev->attr_name;
 	dev->attr.attr.mode = 0444;
@@ -750,8 +765,7 @@ int thermal_zone_bind_cooling_device(struct thermal_zone_device *tz,
 	if (result)
 		goto remove_symbol_link;
 
-	snprintf(dev->weight_attr_name, sizeof(dev->weight_attr_name),
-		 "cdev%d_weight", dev->id);
+	sprintf(dev->weight_attr_name, "cdev%d_weight", dev->id);
 	sysfs_attr_init(&dev->weight_attr.attr);
 	dev->weight_attr.attr.name = dev->weight_attr_name;
 	dev->weight_attr.attr.mode = S_IWUSR | S_IRUGO;

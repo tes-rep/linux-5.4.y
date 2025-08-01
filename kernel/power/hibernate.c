@@ -578,11 +578,7 @@ int hibernation_platform_enter(void)
 
 	local_irq_disable();
 	system_state = SYSTEM_SUSPEND;
-
-	error = syscore_suspend();
-	if (error)
-		goto Enable_irqs;
-
+	syscore_suspend();
 	if (pm_wakeup_pending()) {
 		error = -EAGAIN;
 		goto Power_up;
@@ -594,7 +590,6 @@ int hibernation_platform_enter(void)
 
  Power_up:
 	syscore_resume();
- Enable_irqs:
 	system_state = SYSTEM_RUNNING;
 	local_irq_enable();
 
@@ -630,7 +625,7 @@ static void power_down(void)
 	int error;
 
 	if (hibernation_mode == HIBERNATION_SUSPEND) {
-		error = suspend_devices_and_enter(mem_sleep_current);
+		error = suspend_devices_and_enter(PM_SUSPEND_MEM);
 		if (error) {
 			hibernation_mode = hibernation_ops ?
 						HIBERNATION_PLATFORM :

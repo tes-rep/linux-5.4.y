@@ -87,9 +87,6 @@
 #define BRCMF_ASSOC_PARAMS_FIXED_SIZE \
 	(sizeof(struct brcmf_assoc_params_le) - sizeof(u16))
 
-#define BRCMF_MAX_CHANSPEC_LIST \
-	(BRCMF_DCMD_MEDLEN / sizeof(__le32) - 1)
-
 static bool check_vif_up(struct brcmf_cfg80211_vif *vif)
 {
 	if (!test_bit(BRCMF_VIF_STATUS_READY, &vif->sme_state)) {
@@ -633,35 +630,7 @@ static struct wireless_dev *brcmf_cfg80211_add_iface(struct wiphy *wiphy,
 	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
 	struct brcmf_pub *drvr = cfg->pub;
 	struct wireless_dev *wdev;
-	struct net_device *dev;
 	int err;
-
-	/*
-	 * There is a bug with in-firmware BSS management. When adding virtual
-	 * interface brcmfmac first tells firmware to create new BSS and then
-	 * it creates new struct net_device.
-	 *
-	 * If creating/registering netdev(ice) fails, BSS remains in some bugged
-	 * state. It conflicts with existing BSSes by overtaking their auth
-	 * requests.
-	 *
-	 * It results in one BSS (addresss X) sending beacons and another BSS
-	 * (address Y) replying to authentication requests. This makes interface
-	 * unusable as AP.
-	 *
-	 * To workaround this bug we may try to guess if register_netdev(ice)
-	 * will fail. The most obvious case is using interface name that already
-	 * exists. This is actually quite likely with brcmfmac & some user space
-	 * scripts as brcmfmac doesn't allow deleting virtual interfaces.
-	 * So this bug can be triggered even by something trivial like:
-	 * iw dev wlan0 delete
-	 * iw phy phy0 interface add wlan0 type __ap
-	 */
-	dev = dev_get_by_name(&init_net, name);
-	if (dev) {
-		dev_put(dev);
-		return ERR_PTR(-ENFILE);
-	}
 
 	brcmf_dbg(TRACE, "enter: %s type %d\n", name, type);
 	err = brcmf_vif_add_validate(wiphy_to_cfg(wiphy), type);
@@ -738,7 +707,8 @@ s32 brcmf_notify_escan_complete(struct brcmf_cfg80211_info *cfg,
 	scan_request = cfg->scan_request;
 	cfg->scan_request = NULL;
 
-	timer_delete_sync(&cfg->escan_timeout);
+	if (timer_pending(&cfg->escan_timeout))
+		del_timer_sync(&cfg->escan_timeout);
 
 	if (fw_abort) {
 		/* Do a scan abort to stop the driver's scan engine */
@@ -1296,14 +1266,13 @@ static int brcmf_set_pmk(struct brcmf_if *ifp, const u8 *pmk_data, u16 pmk_len)
 {
 	struct brcmf_pub *drvr = ifp->drvr;
 	struct brcmf_wsec_pmk_le pmk;
-	int err;
+	int i, err;
 
-	memset(&pmk, 0, sizeof(pmk));
-
-	/* pass pmk directly */
-	pmk.key_len = cpu_to_le16(pmk_len);
-	pmk.flags = cpu_to_le16(0);
-	memcpy(pmk.key, pmk_data, pmk_len);
+	/* convert to firmware key format */
+	pmk.key_len = cpu_to_le16(pmk_len << 1);
+	pmk.flags = cpu_to_le16(BRCMF_WSEC_PASSPHRASE);
+	for (i = 0; i < pmk_len; i++)
+		snprintf(&pmk.key[2 * i], 3, "%02x", pmk_data[i]);
 
 	/* store psk in firmware */
 	err = brcmf_fil_cmd_data_set(ifp, BRCMF_C_SET_WSEC_PMK,
@@ -2755,63 +2724,6 @@ done:
 }
 
 static int
-brcmf_cfg80211_dump_survey(struct wiphy *wiphy, struct net_device *ndev,
-			   int idx, struct survey_info *survey)
-{
-	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
-	struct brcmf_if *ifp = netdev_priv(ndev);
-	struct brcmu_chan ch;
-	enum nl80211_band band = 0;
-	s32 err = 0;
-	int noise;
-	u32 freq;
-	u32 chanspec;
-
-	memset(survey, 0, sizeof(struct survey_info));
-	if (idx != 0) {
-		if (idx >= cfg->pub->num_chan_stats || cfg->pub->chan_stats == NULL)
-			return -ENOENT;
-		if (cfg->pub->chan_stats[idx].freq == 0)
-			return -ENOENT;
-		survey->filled = SURVEY_INFO_NOISE_DBM;
-		survey->channel = ieee80211_get_channel(wiphy, cfg->pub->chan_stats[idx].freq);
-		survey->noise = cfg->pub->chan_stats[idx].noise;
-		return 0;
-	}
-
-	err = brcmf_fil_iovar_int_get(ifp, "chanspec", &chanspec);
-	if (err) {
-		brcmf_err("chanspec failed (%d)\n", err);
-		return err;
-	}
-
-	ch.chspec = chanspec;
-	cfg->d11inf.decchspec(&ch);
-
-	switch (ch.band) {
-	case BRCMU_CHAN_BAND_2G:
-		band = NL80211_BAND_2GHZ;
-		break;
-	case BRCMU_CHAN_BAND_5G:
-		band = NL80211_BAND_5GHZ;
-		break;
-	}
-
-	freq = ieee80211_channel_to_frequency(ch.control_ch_num, band);
-	survey->channel = ieee80211_get_channel(wiphy, freq);
-
-	err = brcmf_fil_cmd_int_get(ifp, BRCMF_C_GET_PHY_NOISE, &noise);
-	if (err) {
-		brcmf_err("Could not get noise (%d)\n", err);
-		return err;
-	}
-
-	survey->filled = SURVEY_INFO_NOISE_DBM | SURVEY_INFO_IN_USE;
-	survey->noise = le32_to_cpu(noise);
-	return 0;
-}
-
-static int
 brcmf_cfg80211_dump_station(struct wiphy *wiphy, struct net_device *ndev,
 			    int idx, u8 *mac, struct station_info *sinfo)
 {
@@ -2860,10 +2772,6 @@ brcmf_cfg80211_set_power_mgmt(struct wiphy *wiphy, struct net_device *ndev,
 	 * preference in cfg struct to apply this to
 	 * FW later while initializing the dongle
 	 */
-#if defined(CONFIG_ARCH_BCM2835)
-	brcmf_dbg(INFO, "power management disabled\n");
-	enabled = false;
-#endif
 	cfg->pwr_save = enabled;
 	if (!check_vif_up(ifp->vif)) {
 
@@ -2907,7 +2815,6 @@ static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
 	struct brcmu_chan ch;
 	u16 channel;
 	u32 freq;
-	int i;
 	u16 notify_capability;
 	u16 notify_interval;
 	u8 *notify_ie;
@@ -2932,17 +2839,6 @@ static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
 		band = NL80211_BAND_5GHZ;
 
 	freq = ieee80211_channel_to_frequency(channel, band);
-	for (i = 0;i < cfg->pub->num_chan_stats;i++) {
-		if (freq == cfg->pub->chan_stats[i].freq)
-			break;
-		if (cfg->pub->chan_stats[i].freq == 0)
-			break;
-	}
-	if (i < cfg->pub->num_chan_stats) {
-		cfg->pub->chan_stats[i].freq = freq;
-		cfg->pub->chan_stats[i].noise = bi->phy_noise;
-	}
-
 	bss_data.chan = ieee80211_get_channel(wiphy, freq);
 	bss_data.scan_width = NL80211_BSS_CHAN_WIDTH_20;
 	bss_data.boottime_ns = ktime_to_ns(ktime_get_boottime());
@@ -5360,7 +5256,6 @@ static struct cfg80211_ops brcmf_cfg80211_ops = {
 	.leave_ibss = brcmf_cfg80211_leave_ibss,
 	.get_station = brcmf_cfg80211_get_station,
 	.dump_station = brcmf_cfg80211_dump_station,
-	.dump_survey = brcmf_cfg80211_dump_survey,
 	.set_tx_power = brcmf_cfg80211_set_tx_power,
 	.get_tx_power = brcmf_cfg80211_get_tx_power,
 	.add_key = brcmf_cfg80211_add_key,
@@ -5568,11 +5463,6 @@ static s32 brcmf_get_assoc_ies(struct brcmf_cfg80211_info *cfg,
 		(struct brcmf_cfg80211_assoc_ielen_le *)cfg->extra_buf;
 	req_len = le32_to_cpu(assoc_info->req_len);
 	resp_len = le32_to_cpu(assoc_info->resp_len);
-	if (req_len > WL_EXTRA_BUF_MAX || resp_len > WL_EXTRA_BUF_MAX) {
-		bphy_err(drvr, "invalid lengths in assoc info: req %u resp %u\n",
-			 req_len, resp_len);
-		return -EINVAL;
-	}
 	if (req_len) {
 		err = brcmf_fil_iovar_data_get(ifp, "assoc_req_ies",
 					       cfg->extra_buf,
@@ -6177,13 +6067,6 @@ static int brcmf_construct_chaninfo(struct brcmf_cfg80211_info *cfg,
 			band->channels[i].flags = IEEE80211_CHAN_DISABLED;
 
 	total = le32_to_cpu(list->count);
-	if (total > BRCMF_MAX_CHANSPEC_LIST) {
-		bphy_err(drvr, "Invalid count of channel Spec. (%u)\n",
-			 total);
-		err = -EINVAL;
-		goto fail_pbuf;
-	}
-
 	for (i = 0; i < total; i++) {
 		ch.chspec = (u16)le32_to_cpu(list->element[i]);
 		cfg->d11inf.decchspec(&ch);
@@ -6329,13 +6212,6 @@ static int brcmf_enable_bw40_2g(struct brcmf_cfg80211_info *cfg)
 		band = cfg_to_wiphy(cfg)->bands[NL80211_BAND_2GHZ];
 		list = (struct brcmf_chanspec_list *)pbuf;
 		num_chan = le32_to_cpu(list->count);
-		if (num_chan > BRCMF_MAX_CHANSPEC_LIST) {
-			bphy_err(drvr, "Invalid count of channel Spec. (%u)\n",
-				 num_chan);
-			kfree(pbuf);
-			return -EINVAL;
-		}
-
 		for (i = 0; i < num_chan; i++) {
 			ch.chspec = (u16)le32_to_cpu(list->element[i]);
 			cfg->d11inf.decchspec(&ch);
@@ -7341,7 +7217,6 @@ void brcmf_cfg80211_detach(struct brcmf_cfg80211_info *cfg)
 	brcmf_btcoex_detach(cfg);
 	wiphy_unregister(cfg->wiphy);
 	wl_deinit_priv(cfg);
-	cancel_work_sync(&cfg->escan_timeout_work);
 	brcmf_free_wiphy(cfg->wiphy);
 	kfree(cfg);
 }

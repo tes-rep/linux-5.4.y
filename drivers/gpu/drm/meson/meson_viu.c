@@ -7,7 +7,6 @@
  */
 
 #include <linux/export.h>
-#include <linux/bitfield.h>
 
 #include "meson_drv.h"
 #include "meson_viu.h"
@@ -92,7 +91,7 @@ static void meson_viu_set_g12a_osd1_matrix(struct meson_drm *priv,
 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_COEF11_12));
 	writel(((m[9] & 0x1fff) << 16) | (m[10] & 0x1fff),
 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_COEF20_21));
-	writel((m[11] & 0x1fff),
+	writel((m[11] & 0x1fff) << 16,
 		priv->io_base +	_REG(VPP_WRAP_OSD1_MATRIX_COEF22));
 
 	writel(((m[18] & 0xfff) << 16) | (m[19] & 0xfff),
@@ -336,57 +335,6 @@ void meson_viu_osd1_reset(struct meson_drm *priv)
 	meson_viu_load_matrix(priv);
 }
 
-void meson_viu_g12a_enable_osd1_afbc(struct meson_drm *priv)
-{
-	/* Enable Mali AFBC Unpack */
-	writel_bits_relaxed(VIU_OSD1_MALI_UNPACK_EN,
-			    VIU_OSD1_MALI_UNPACK_EN,
-			    priv->io_base + _REG(VIU_OSD1_MALI_UNPACK_CTRL));
-
-	/* Setup RGBA Reordering */
-	writel_bits_relaxed(VIU_OSD1_MALI_AFBCD_A_REORDER |
-			    VIU_OSD1_MALI_AFBCD_B_REORDER |
-			    VIU_OSD1_MALI_AFBCD_G_REORDER |
-			    VIU_OSD1_MALI_AFBCD_R_REORDER,
-			    FIELD_PREP(VIU_OSD1_MALI_AFBCD_A_REORDER,
-				       VIU_OSD1_MALI_REORDER_A) |
-			    FIELD_PREP(VIU_OSD1_MALI_AFBCD_B_REORDER,
-				       VIU_OSD1_MALI_REORDER_B) |
-			    FIELD_PREP(VIU_OSD1_MALI_AFBCD_G_REORDER,
-				       VIU_OSD1_MALI_REORDER_G) |
-			    FIELD_PREP(VIU_OSD1_MALI_AFBCD_R_REORDER,
-				       VIU_OSD1_MALI_REORDER_R),
-			    priv->io_base + _REG(VIU_OSD1_MALI_UNPACK_CTRL));
-
-	/* Select AFBCD path for OSD1 */
-	writel_bits_relaxed(OSD_PATH_OSD_AXI_SEL_OSD1_AFBCD,
-			    OSD_PATH_OSD_AXI_SEL_OSD1_AFBCD,
-			    priv->io_base + _REG(OSD_PATH_MISC_CTRL));
-}
-
-void meson_viu_g12a_disable_osd1_afbc(struct meson_drm *priv)
-{
-	/* Disable AFBCD path for OSD1 */
-	writel_bits_relaxed(OSD_PATH_OSD_AXI_SEL_OSD1_AFBCD, 0,
-			    priv->io_base + _REG(OSD_PATH_MISC_CTRL));
-
-	/* Disable AFBCD unpack */
-	writel_bits_relaxed(VIU_OSD1_MALI_UNPACK_EN, 0,
-			    priv->io_base + _REG(VIU_OSD1_MALI_UNPACK_CTRL));
-}
-
-void meson_viu_gxm_enable_osd1_afbc(struct meson_drm *priv)
-{
-	writel_bits_relaxed(MALI_AFBC_MISC, FIELD_PREP(MALI_AFBC_MISC, 0x90),
-			    priv->io_base + _REG(VIU_MISC_CTRL1));
-}
-
-void meson_viu_gxm_disable_osd1_afbc(struct meson_drm *priv)
-{
-	writel_bits_relaxed(MALI_AFBC_MISC, FIELD_PREP(MALI_AFBC_MISC, 0x00),
-			    priv->io_base + _REG(VIU_MISC_CTRL1));
-}
-
 static inline uint32_t meson_viu_osd_burst_length_reg(uint32_t length)
 {
 	uint32_t val = (((length & 0x80) % 24) / 12);
@@ -419,7 +367,7 @@ void meson_viu_init(struct meson_drm *priv)
 
 	/* Initialize OSD1 fifo control register */
 	reg = VIU_OSD_DDR_PRIORITY_URGENT |
-		VIU_OSD_HOLD_FIFO_LINES(31) |
+		VIU_OSD_HOLD_FIFO_LINES(4) |
 		VIU_OSD_FIFO_DEPTH_VAL(32) | /* fifo_depth_val: 32*8=256 */
 		VIU_OSD_WORDS_PER_BURST(4) | /* 4 words in 1 burst */
 		VIU_OSD_FIFO_LIMITS(2);      /* fifo_lim: 2*16=32 */
@@ -452,17 +400,17 @@ void meson_viu_init(struct meson_drm *priv)
 			priv->io_base + _REG(VD2_IF0_LUMA_FIFO_SIZE));
 
 	if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A)) {
-		u32 val = (u32)VIU_OSD_BLEND_REORDER(0, 1) |
-			  (u32)VIU_OSD_BLEND_REORDER(1, 0) |
-			  (u32)VIU_OSD_BLEND_REORDER(2, 0) |
-			  (u32)VIU_OSD_BLEND_REORDER(3, 0) |
-			  (u32)VIU_OSD_BLEND_DIN_EN(1) |
-			  (u32)VIU_OSD_BLEND1_DIN3_BYPASS_TO_DOUT1 |
-			  (u32)VIU_OSD_BLEND1_DOUT_BYPASS_TO_BLEND2 |
-			  (u32)VIU_OSD_BLEND_DIN0_BYPASS_TO_DOUT0 |
-			  (u32)VIU_OSD_BLEND_BLEN2_PREMULT_EN(1) |
-			  (u32)VIU_OSD_BLEND_HOLD_LINES(4);
-		writel_relaxed(val, priv->io_base + _REG(VIU_OSD_BLEND_CTRL));
+		writel_relaxed(VIU_OSD_BLEND_REORDER(0, 1) |
+			       VIU_OSD_BLEND_REORDER(1, 0) |
+			       VIU_OSD_BLEND_REORDER(2, 0) |
+			       VIU_OSD_BLEND_REORDER(3, 0) |
+			       VIU_OSD_BLEND_DIN_EN(1) |
+			       VIU_OSD_BLEND1_DIN3_BYPASS_TO_DOUT1 |
+			       VIU_OSD_BLEND1_DOUT_BYPASS_TO_BLEND2 |
+			       VIU_OSD_BLEND_DIN0_BYPASS_TO_DOUT0 |
+			       VIU_OSD_BLEND_BLEN2_PREMULT_EN(1) |
+			       VIU_OSD_BLEND_HOLD_LINES(4),
+			       priv->io_base + _REG(VIU_OSD_BLEND_CTRL));
 
 		writel_relaxed(OSD_BLEND_PATH_SEL_ENABLE,
 			       priv->io_base + _REG(OSD1_BLEND_SRC_CTRL));

@@ -523,7 +523,7 @@ struct xhci_ep_ctx *xhci_get_ep_ctx(struct xhci_hcd *xhci,
 	return (struct xhci_ep_ctx *)
 		(ctx->bytes + (ep_index * CTX_SIZE(xhci->hcc_params)));
 }
-
+EXPORT_SYMBOL_GPL(xhci_get_ep_ctx);
 
 /***************** Streams structures manipulation *************************/
 
@@ -650,7 +650,7 @@ struct xhci_stream_info *xhci_alloc_stream_info(struct xhci_hcd *xhci,
 			num_stream_ctxs, &stream_info->ctx_array_dma,
 			mem_flags);
 	if (!stream_info->stream_ctx_array)
-		goto cleanup_ring_array;
+		goto cleanup_ctx;
 	memset(stream_info->stream_ctx_array, 0,
 			sizeof(struct xhci_stream_ctx)*num_stream_ctxs);
 
@@ -711,11 +711,6 @@ cleanup_rings:
 	}
 	xhci_free_command(xhci, stream_info->free_streams_command);
 cleanup_ctx:
-	xhci_free_stream_ctx(xhci,
-		stream_info->num_stream_ctxs,
-		stream_info->stream_ctx_array,
-		stream_info->ctx_array_dma);
-cleanup_ring_array:
 	kfree(stream_info->stream_rings);
 cleanup_info:
 	kfree(stream_info);
@@ -906,19 +901,15 @@ void xhci_free_virt_device(struct xhci_hcd *xhci, int slot_id)
 		if (dev->eps[i].stream_info)
 			xhci_free_stream_info(xhci,
 					dev->eps[i].stream_info);
-		/*
-		 * Endpoints are normally deleted from the bandwidth list when
-		 * endpoints are dropped, before device is freed.
-		 * If host is dying or being removed then endpoints aren't
-		 * dropped cleanly, so delete the endpoint from list here.
-		 * Only applicable for hosts with software bandwidth checking.
+		/* Endpoints on the TT/root port lists should have been removed
+		 * when usb_disable_device() was called for the device.
+		 * We can't drop them anyway, because the udev might have gone
+		 * away by this point, and we can't tell what speed it was.
 		 */
-
-		if (!list_empty(&dev->eps[i].bw_endpoint_list)) {
-			list_del_init(&dev->eps[i].bw_endpoint_list);
-			xhci_dbg(xhci, "Slot %u endpoint %u not removed from BW list!\n",
-				 slot_id, i);
-		}
+		if (!list_empty(&dev->eps[i].bw_endpoint_list))
+			xhci_warn(xhci, "Slot %u endpoint %u "
+					"not removed from BW list!\n",
+					slot_id, i);
 	}
 	/* If this is a hub, free the TT(s) from the TT list */
 	xhci_free_tt_info(xhci, dev, slot_id);
@@ -1509,6 +1500,17 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 	virt_dev->eps[ep_index].skip = false;
 	ep_ring = virt_dev->eps[ep_index].new_ring;
 
+#ifdef CONFIG_AMLOGIC_USB
+	if (xhci->quirks & XHCI_CRG_HOST_010) {
+		if (udev->speed == USB_SPEED_SUPER) {
+			if (endpoint_type == BULK_IN_EP) {
+				max_burst = 0;
+				xhci_warn(xhci, "##### crg set max_burst 0\n");
+			}
+		}
+	}
+#endif
+
 	/* Fill the endpoint context */
 	ep_ctx->ep_info = cpu_to_le32(EP_MAX_ESIT_PAYLOAD_HI(max_esit_payload) |
 				      EP_INTERVAL(interval) |
@@ -1766,8 +1768,6 @@ struct xhci_command *xhci_alloc_command(struct xhci_hcd *xhci,
 	}
 
 	command->status = 0;
-	/* set default timeout to 5000 ms */
-	command->timeout_ms = XHCI_CMD_DEFAULT_TIMEOUT;
 	INIT_LIST_HEAD(&command->cmd_list);
 	return command;
 }
@@ -2225,7 +2225,11 @@ static void xhci_add_in_port(struct xhci_hcd *xhci, unsigned int num_ports,
 		 (temp & XHCI_HLC)) {
 		xhci_dbg_trace(xhci, trace_xhci_dbg_init,
 			       "xHCI 1.0: support USB2 hardware lpm");
+#ifdef CONFIG_AMLOGIC_USB
+		xhci->quirks |= XHCI_HW_LPM_DISABLE;
+#else
 		xhci->hw_lpm_support = 1;
+#endif
 	}
 
 	port_offset--;
@@ -2362,6 +2366,11 @@ static int xhci_setup_port_arrays(struct xhci_hcd *xhci, gfp_t flags)
 	xhci_dbg_trace(xhci, trace_xhci_dbg_init,
 		       "Found %u USB 2.0 ports and %u USB 3.0 ports.",
 		       xhci->usb2_rhub.num_ports, xhci->usb3_rhub.num_ports);
+
+#ifdef CONFIG_AMLOGIC_USB
+	if ((xhci->quirks & XHCI_AML_SUPER_SPEED_SUPPORT) == 0)
+		xhci->usb3_rhub.num_ports = 0;
+#endif
 
 	/* Place limits on the number of roothub ports so that the hub
 	 * descriptors aren't longer than the USB core will allocate.

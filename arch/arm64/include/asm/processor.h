@@ -27,6 +27,8 @@
 #include <linux/stddef.h>
 #include <linux/string.h>
 
+#include <vdso/processor.h>
+
 #include <asm/alternative.h>
 #include <asm/cpufeature.h>
 #include <asm/hw_breakpoint.h>
@@ -184,9 +186,8 @@ void tls_preserve_current_state(void);
 
 static inline void start_thread_common(struct pt_regs *regs, unsigned long pc)
 {
-	s32 previous_syscall = regs->syscallno;
 	memset(regs, 0, sizeof(*regs));
-	regs->syscallno = previous_syscall;
+	forget_syscall(regs);
 	regs->pc = pc;
 
 	if (system_uses_irq_prio_masking())
@@ -242,11 +243,6 @@ struct task_struct;
 extern void release_thread(struct task_struct *);
 
 unsigned long get_wchan(struct task_struct *p);
-
-static inline void cpu_relax(void)
-{
-	asm volatile("yield" ::: "memory");
-}
 
 /* Thread switching */
 extern struct task_struct *cpu_switch_to(struct task_struct *prev,

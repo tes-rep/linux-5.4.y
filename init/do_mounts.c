@@ -588,6 +588,7 @@ void __init prepare_namespace(void)
 	wait_for_device_probe();
 
 	md_run_setup();
+	dm_run_setup();
 
 	if (saved_root_name[0]) {
 		root_device_name = saved_root_name;
@@ -643,10 +644,7 @@ struct file_system_type rootfs_fs_type = {
 
 void __init init_rootfs(void)
 {
-	if (IS_ENABLED(CONFIG_TMPFS)) {
-		if (!saved_root_name[0] && !root_fs_names)
-			is_tmpfs = true;
-		else if (root_fs_names && !!strstr(root_fs_names, "tmpfs"))
-			is_tmpfs = true;
-	}
+	if (IS_ENABLED(CONFIG_TMPFS) && !saved_root_name[0] &&
+		(!root_fs_names || strstr(root_fs_names, "tmpfs")))
+		is_tmpfs = true;
 }

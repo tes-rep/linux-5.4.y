@@ -25,7 +25,6 @@
 #include <uapi/linux/videodev2.h>
 
 #include <drm/bridge/dw_hdmi.h>
-#include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_of.h>
@@ -699,11 +698,6 @@ static void hdmi_enable_audio_clk(struct dw_hdmi *hdmi, bool enable)
 	else
 		hdmi->mc_clkdis |= HDMI_MC_CLKDIS_AUDCLK_DISABLE;
 	hdmi_writeb(hdmi, hdmi->mc_clkdis, HDMI_MC_CLKDIS);
-
-	if (enable) {
-		hdmi_set_cts_n(hdmi, hdmi->audio_cts, 0);
-		hdmi_set_cts_n(hdmi, hdmi->audio_cts, hdmi->audio_n);
-	}
 }
 
 static void dw_hdmi_ahb_audio_enable(struct dw_hdmi *hdmi)
@@ -1734,41 +1728,6 @@ static void hdmi_config_vendor_specific_infoframe(struct dw_hdmi *hdmi,
 			HDMI_FC_DATAUTO0_VSD_MASK);
 }
 
-static void hdmi_config_drm_infoframe(struct dw_hdmi *hdmi)
-{
-	const struct drm_connector_state *conn_state = hdmi->connector.state;
-	struct hdmi_drm_infoframe frame;
-	u8 buffer[30];
-	ssize_t err;
-	int i;
-
-	if (!hdmi->plat_data->use_drm_infoframe)
-		return;
-
-	hdmi_modb(hdmi, HDMI_FC_PACKET_TX_EN_DRM_DISABLE,
-		  HDMI_FC_PACKET_TX_EN_DRM_MASK, HDMI_FC_PACKET_TX_EN);
-
-	err = drm_hdmi_infoframe_set_hdr_metadata(&frame, conn_state);
-	if (err < 0)
-		return;
-
-	err = hdmi_drm_infoframe_pack(&frame, buffer, sizeof(buffer));
-	if (err < 0) {
-		dev_err(hdmi->dev, "Failed to pack drm infoframe: %zd\n", err);
-		return;
-	}
-
-	hdmi_writeb(hdmi, frame.version, HDMI_FC_DRM_HB0);
-	hdmi_writeb(hdmi, frame.length, HDMI_FC_DRM_HB1);
-
-	for (i = 0; i < frame.length; i++)
-		hdmi_writeb(hdmi, buffer[4 + i], HDMI_FC_DRM_PB0 + i);
-
-	hdmi_writeb(hdmi, 1, HDMI_FC_DRM_UP);
-	hdmi_modb(hdmi, HDMI_FC_PACKET_TX_EN_DRM_ENABLE,
-		  HDMI_FC_PACKET_TX_EN_DRM_MASK, HDMI_FC_PACKET_TX_EN);
-}
-
 static void hdmi_av_composer(struct dw_hdmi *hdmi,
 			     const struct drm_display_mode *mode)
 {
@@ -2213,8 +2172,22 @@ static void dw_hdmi_update_phy_mask(struct dw_hdmi *hdmi)
 					  hdmi->rxsense);
 }
 
-static int dw_hdmi_connector_update_edid(struct drm_connector *connector,
-					  bool add_modes)
+static enum drm_connector_status
+dw_hdmi_connector_detect(struct drm_connector *connector, bool force)
+{
+	struct dw_hdmi *hdmi = container_of(connector, struct dw_hdmi,
+					     connector);
+
+	mutex_lock(&hdmi->mutex);
+	hdmi->force = DRM_FORCE_UNSPECIFIED;
+	dw_hdmi_update_power(hdmi);
+	dw_hdmi_update_phy_mask(hdmi);
+	mutex_unlock(&hdmi->mutex);
+
+	return hdmi->phy.ops->read_hpd(hdmi, hdmi->phy.data);
+}
+
+static int dw_hdmi_connector_get_modes(struct drm_connector *connector)
 {
 	struct dw_hdmi *hdmi = container_of(connector, struct dw_hdmi,
 					     connector);
@@ -2233,83 +2206,13 @@ static int dw_hdmi_connector_update_edid(struct drm_connector *connector,
 		hdmi->sink_has_audio = drm_detect_monitor_audio(edid);
 		drm_connector_update_edid_property(connector, edid);
 		cec_notifier_set_phys_addr_from_edid(hdmi->cec_notifier, edid);
-		if (add_modes)
-			ret = drm_add_edid_modes(connector, edid);
-		else
-			drm_edid_to_eld(connector, edid);
+		ret = drm_add_edid_modes(connector, edid);
 		kfree(edid);
 	} else {
 		dev_dbg(hdmi->dev, "failed to get edid\n");
 	}
 
 	return ret;
-}
-
-static enum drm_connector_status
-dw_hdmi_connector_detect(struct drm_connector *connector, bool force)
-{
-	enum drm_connector_status status;
-	struct dw_hdmi *hdmi = container_of(connector, struct dw_hdmi,
-					     connector);
-
-	mutex_lock(&hdmi->mutex);
-	hdmi->force = DRM_FORCE_UNSPECIFIED;
-	dw_hdmi_update_power(hdmi);
-	dw_hdmi_update_phy_mask(hdmi);
-	mutex_unlock(&hdmi->mutex);
-
-	status = hdmi->phy.ops->read_hpd(hdmi, hdmi->phy.data);
-
-	if (status == connector_status_connected)
-		dw_hdmi_connector_update_edid(connector, false);
-	else
-		cec_notifier_phys_addr_invalidate(hdmi->cec_notifier);
-
-	return status;
-}
-
-static int dw_hdmi_connector_get_modes(struct drm_connector *connector)
-{
-	return dw_hdmi_connector_update_edid(connector, true);
-}
-
-static bool hdr_metadata_equal(const struct drm_connector_state *old_state,
-			       const struct drm_connector_state *new_state)
-{
-	struct drm_property_blob *old_blob = old_state->hdr_output_metadata;
-	struct drm_property_blob *new_blob = new_state->hdr_output_metadata;
-
-	if (!old_blob || !new_blob)
-		return old_blob == new_blob;
-
-	if (old_blob->length != new_blob->length)
-		return false;
-
-	return !memcmp(old_blob->data, new_blob->data, old_blob->length);
-}
-
-static int dw_hdmi_connector_atomic_check(struct drm_connector *connector,
-					  struct drm_atomic_state *state)
-{
-	struct drm_connector_state *old_state =
-		drm_atomic_get_old_connector_state(state, connector);
-	struct drm_connector_state *new_state =
-		drm_atomic_get_new_connector_state(state, connector);
-	struct drm_crtc *crtc = new_state->crtc;
-	struct drm_crtc_state *crtc_state;
-
-	if (!crtc)
-		return 0;
-
-	if (!hdr_metadata_equal(old_state, new_state)) {
-		crtc_state = drm_atomic_get_crtc_state(state, crtc);
-		if (IS_ERR(crtc_state))
-			return PTR_ERR(crtc_state);
-
-		crtc_state->mode_changed = true;
-	}
-
-	return 0;
 }
 
 static void dw_hdmi_connector_force(struct drm_connector *connector)
@@ -2336,7 +2239,6 @@ static const struct drm_connector_funcs dw_hdmi_connector_funcs = {
 
 static const struct drm_connector_helper_funcs dw_hdmi_connector_helper_funcs = {
 	.get_modes = dw_hdmi_connector_get_modes,
-	.atomic_check = dw_hdmi_connector_atomic_check,
 };
 
 static int dw_hdmi_bridge_attach(struct drm_bridge *bridge)
@@ -2356,10 +2258,6 @@ static int dw_hdmi_bridge_attach(struct drm_bridge *bridge)
 				    &dw_hdmi_connector_funcs,
 				    DRM_MODE_CONNECTOR_HDMIA,
 				    hdmi->ddc);
-
-	if (hdmi->version >= 0x200a && hdmi->plat_data->use_drm_infoframe)
-		drm_object_attach_property(&connector->base,
-			connector->dev->mode_config.hdr_output_metadata_property, 0);
 
 	drm_connector_attach_encoder(connector, encoder);
 
@@ -2549,6 +2447,12 @@ static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
 		dw_hdmi_setup_rx_sense(hdmi,
 				       phy_stat & HDMI_PHY_HPD,
 				       phy_stat & HDMI_PHY_RX_SENSE);
+
+		if ((phy_stat & (HDMI_PHY_RX_SENSE | HDMI_PHY_HPD)) == 0) {
+			mutex_lock(&hdmi->cec_notifier_mutex);
+			cec_notifier_phys_addr_invalidate(hdmi->cec_notifier);
+			mutex_unlock(&hdmi->cec_notifier_mutex);
+		}
 	}
 
 	if (intr_stat & HDMI_IH_PHY_STAT0_HPD) {

@@ -105,6 +105,11 @@ int dwc3_host_init(struct dwc3 *dwc)
 	if (dwc->revision <= DWC3_REVISION_300A)
 		props[prop_idx++] = PROPERTY_ENTRY_BOOL("quirk-broken-port-ped");
 
+#ifdef CONFIG_AMLOGIC_USB
+	if (dwc->super_speed_support)
+		props[prop_idx++].name = "super_speed_support";
+#endif
+
 	if (prop_idx) {
 		ret = platform_device_add_properties(xhci, props);
 		if (ret) {
@@ -128,5 +133,4 @@ err:
 void dwc3_host_exit(struct dwc3 *dwc)
 {
 	platform_device_unregister(dwc->xhci);
-	dwc->xhci = NULL;
 }

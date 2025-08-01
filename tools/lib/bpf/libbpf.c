@@ -1884,7 +1884,7 @@ static int bpf_map_find_btf_info(struct bpf_object *obj, struct bpf_map *map)
 int bpf_map__reuse_fd(struct bpf_map *map, int fd)
 {
 	struct bpf_map_info info = {};
-	__u32 len = sizeof(info), name_len;
+	__u32 len = sizeof(info);
 	int new_fd, err;
 	char *new_name;
 
@@ -1892,12 +1892,7 @@ int bpf_map__reuse_fd(struct bpf_map *map, int fd)
 	if (err)
 		return err;
 
-	name_len = strlen(info.name);
-	if (name_len == BPF_OBJ_NAME_LEN - 1 && strncmp(map->name, info.name, name_len) == 0)
-		new_name = strdup(map->name);
-	else
-		new_name = strdup(info.name);
-
+	new_name = strdup(info.name);
 	if (!new_name)
 		return -errno;
 
@@ -4754,7 +4749,7 @@ __bpf_map__iter(const struct bpf_map *m, const struct bpf_object *obj, int i)
 struct bpf_map *
 bpf_map__next(const struct bpf_map *prev, const struct bpf_object *obj)
 {
-	if (prev == NULL && obj != NULL)
+	if (prev == NULL)
 		return obj->maps;
 
 	return __bpf_map__iter(prev, obj, 1);
@@ -4763,7 +4758,7 @@ bpf_map__next(const struct bpf_map *prev, const struct bpf_object *obj)
 struct bpf_map *
 bpf_map__prev(const struct bpf_map *next, const struct bpf_object *obj)
 {
-	if (next == NULL && obj != NULL) {
+	if (next == NULL) {
 		if (!obj->nr_maps)
 			return NULL;
 		return obj->maps + obj->nr_maps - 1;

@@ -76,6 +76,9 @@ static int cistpl_manfid(struct mmc_card *card, struct sdio_func *func,
 			 const unsigned char *buf, unsigned size)
 {
 	unsigned int vendor, device;
+#ifdef CONFIG_AMLOGIC_MODIFY
+	int i;
+#endif
 
 	/* TPLMID_MANF */
 	vendor = buf[0] | (buf[1] << 8);
@@ -91,6 +94,14 @@ static int cistpl_manfid(struct mmc_card *card, struct sdio_func *func,
 		card->cis.device = device;
 	}
 
+#ifdef CONFIG_AMLOGIC_MODIFY
+	for (i = 0; i < ARRAY_SIZE(aWifi_clk); i++) {
+		if (aWifi_clk[i].m_device_id == device) {
+			aWifi_clk[i].m_use_flag = 1;
+			break;
+		}
+	}
+#endif
 	return 0;
 }
 
@@ -384,6 +395,12 @@ int sdio_read_func_cis(struct sdio_func *func)
 		return ret;
 
 	/*
+	 * Since we've linked to tuples in the card structure,
+	 * we must make sure we have a reference to it.
+	 */
+	get_device(&func->card->dev);
+
+	/*
 	 * Vendor/device id is optional for function CIS, so
 	 * copy it from the card structure as needed.
 	 */
@@ -408,5 +425,11 @@ void sdio_free_func_cis(struct sdio_func *func)
 	}
 
 	func->tuples = NULL;
+
+	/*
+	 * We have now removed the link to the tuples in the
+	 * card structure, so remove the reference.
+	 */
+	put_device(&func->card->dev);
 }
 

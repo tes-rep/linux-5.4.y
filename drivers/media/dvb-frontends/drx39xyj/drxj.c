@@ -4201,7 +4201,7 @@ int drxj_dap_scu_atomic_read_reg16(struct i2c_device_addr *dev_addr,
 					 u16 *data, u32 flags)
 {
 	u8 buf[2] = { 0 };
-	int rc;
+	int rc = -EIO;
 	u16 word = 0;
 
 	if (!data)
@@ -12366,7 +12366,7 @@ error:
 
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(drx39xxj_attach);
+EXPORT_SYMBOL(drx39xxj_attach);
 
 static const struct dvb_frontend_ops drx39xxj_ops = {
 	.delsys = { SYS_ATSC, SYS_DVBC_ANNEX_B },

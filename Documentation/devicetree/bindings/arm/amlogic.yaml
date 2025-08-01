@@ -94,7 +94,7 @@ properties:
               - amlogic,p212
               - hwacom,amazetv
               - khadas,vim
-              - libretech,aml-s905x-cc
+              - libretech,cc
               - nexbox,a95x
           - const: amlogic,s905x
           - const: amlogic,meson-gxl
@@ -145,10 +145,8 @@ properties:
       - description: Boards with the Amlogic Meson G12B S922X SoC
         items:
           - enum:
-              - azw,gtking
               - hardkernel,odroid-n2
               - khadas,vim3
-              - ugoos,am6
           - const: amlogic,s922x
           - const: amlogic,g12b
 

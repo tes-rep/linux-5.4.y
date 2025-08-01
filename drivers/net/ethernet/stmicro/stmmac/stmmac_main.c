@@ -30,6 +30,9 @@
 #include <linux/slab.h>
 #include <linux/prefetch.h>
 #include <linux/pinctrl/consumer.h>
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
+#include "../../../../amlogic/ethernet/phy/phy_debug.h"
+#endif
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
@@ -48,6 +51,43 @@
 #define	STMMAC_ALIGN(x)		ALIGN(ALIGN(x, SMP_CACHE_BYTES), 16)
 #define	TSO_MAX_BUFF_SIZE	(SZ_16K - 1)
 
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
+struct phylink {
+       /* private: */
+	struct net_device *netdev;
+	const struct phylink_mac_ops *ops;
+	struct phylink_config *config;
+	struct device *dev;
+	unsigned int old_link_state:1;
+	unsigned long phylink_disable_state; /* bitmask of disables */
+	struct phy_device *phydev;
+	phy_interface_t link_interface; /* PHY_INTERFACE_xxx */
+	u8 link_an_mode;                /* MLO_AN_xxx */
+	u8 link_port;                   /* The current non-phy ethtool port */
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported);
+
+	/* The link configuration settings */
+	struct phylink_link_state link_config;
+
+	/* The current settings */
+	phy_interface_t cur_interface;
+
+	struct gpio_desc *link_gpio;
+	unsigned int link_irq;
+	struct timer_list link_poll;
+	void (*get_fixed_state)(struct net_device *dev,
+				struct phylink_link_state *s);
+	/*code review need comment*/
+	struct mutex state_mutex;
+	struct phylink_link_state phy_state;
+	struct work_struct resolve;
+
+	bool mac_link_dropped;
+
+	struct sfp_bus *sfp_bus;
+};
+
+#endif
 /* Module parameters */
 #define TX_TIMEO	5000
 static int watchdog = TX_TIMEO;
@@ -930,10 +970,14 @@ static void stmmac_mac_link_up(struct phylink_config *config,
 {
 	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
 
+	if (device_may_wakeup(priv->device)) {
+		if (!priv->plat->mdns_wkup)
+			pm_relax(priv->device);
+	}
+
 	stmmac_mac_set(priv, priv->ioaddr, true);
 	if (phy && priv->dma_cap.eee) {
-		priv->eee_active =
-			phy_init_eee(phy, !priv->plat->rx_clk_runs_in_lpi) >= 0;
+		priv->eee_active = phy_init_eee(phy, 1) >= 0;
 		priv->eee_enabled = stmmac_eee_init(priv);
 		stmmac_set_eee_pls(priv, priv->hw, true);
 	}
@@ -998,11 +1042,6 @@ static int stmmac_init_phy(struct net_device *dev)
 	if (!node || ret) {
 		int addr = priv->plat->phy_addr;
 		struct phy_device *phydev;
-
-		if (addr < 0) {
-			netdev_err(priv->dev, "no phy found\n");
-			return -ENODEV;
-		}
 
 		phydev = mdiobus_get_phy(priv->mii, addr);
 		if (!phydev) {
@@ -2193,8 +2232,6 @@ static int stmmac_init_dma_engine(struct stmmac_priv *priv)
 	if (priv->extend_desc && (priv->mode == STMMAC_RING_MODE))
 		atds = 1;
 
-	msleep(1500);
-
 	ret = stmmac_reset(priv, priv->ioaddr);
 	if (ret) {
 		dev_err(priv->device, "Failed to reset the dma\n");
@@ -2736,6 +2773,10 @@ static int stmmac_open(struct net_device *dev)
 	stmmac_enable_all_queues(priv);
 	netif_tx_start_all_queues(priv->dev);
 
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
+	ret = gmac_create_sysfs(priv->phylink->phydev, priv->ioaddr);
+#endif
+
 	return 0;
 
 lpiirq_error:
@@ -2801,7 +2842,9 @@ static int stmmac_release(struct net_device *dev)
 	netif_carrier_off(dev);
 
 	stmmac_release_ptp(priv);
-
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
+	gmac_remove_sysfs(priv->phylink->phydev);
+#endif
 	return 0;
 }
 
@@ -3442,55 +3485,6 @@ static inline void stmmac_rx_refill(struct stmmac_priv *priv, u32 queue)
 	stmmac_set_rx_tail_ptr(priv, priv->ioaddr, rx_q->rx_tail_addr, queue);
 }
 
-static unsigned int stmmac_rx_buf1_len(struct stmmac_priv *priv,
-				       struct dma_desc *p,
-				       int status, unsigned int len)
-{
-	int ret, coe = priv->hw->rx_csum;
-	unsigned int plen = 0, hlen = 0;
-
-	/* Not first descriptor, buffer is always zero */
-	if (priv->sph && len)
-		return 0;
-
-	/* First descriptor, get split header length */
-	ret = stmmac_get_rx_header_len(priv, p, &hlen);
-	if (priv->sph && hlen) {
-		priv->xstats.rx_split_hdr_pkt_n++;
-		return hlen;
-	}
-
-	/* First descriptor, not last descriptor and not split header */
-	if (status & rx_not_ls)
-		return priv->dma_buf_sz;
-
-	plen = stmmac_get_rx_frame_len(priv, p, coe);
-
-	/* First descriptor and last descriptor and not split header */
-	return min_t(unsigned int, priv->dma_buf_sz, plen);
-}
-
-static unsigned int stmmac_rx_buf2_len(struct stmmac_priv *priv,
-				       struct dma_desc *p,
-				       int status, unsigned int len)
-{
-	int coe = priv->hw->rx_csum;
-	unsigned int plen = 0;
-
-	/* Not split header, buffer is not available */
-	if (!priv->sph)
-		return 0;
-
-	/* Not last descriptor */
-	if (status & rx_not_ls)
-		return priv->dma_buf_sz;
-
-	plen = stmmac_get_rx_frame_len(priv, p, coe);
-
-	/* Last descriptor */
-	return plen - len;
-}
-
 /**
  * stmmac_rx - manage the receive process
  * @priv: driver private structure
@@ -3520,10 +3514,11 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
 		stmmac_display_ring(priv, rx_head, DMA_RX_SIZE, true);
 	}
 	while (count < limit) {
-		unsigned int buf1_len = 0, buf2_len = 0;
+		unsigned int hlen = 0, prev_len = 0;
 		enum pkt_hash_types hash_type;
 		struct stmmac_rx_buffer *buf;
 		struct dma_desc *np, *p;
+		unsigned int sec_len;
 		int entry;
 		u32 hash;
 
@@ -3538,12 +3533,11 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
 			len = 0;
 		}
 
-read_again:
 		if (count >= limit)
 			break;
 
-		buf1_len = 0;
-		buf2_len = 0;
+read_again:
+		sec_len = 0;
 		entry = next_entry;
 		buf = &rx_q->buf_pool[entry];
 
@@ -3568,6 +3562,7 @@ read_again:
 			np = rx_q->dma_rx + next_entry;
 
 		prefetch(np);
+		prefetch(page_address(buf->page));
 
 		if (priv->extend_desc)
 			stmmac_rx_extended_status(priv, &priv->dev->stats,
@@ -3584,61 +3579,69 @@ read_again:
 			goto read_again;
 		if (unlikely(error)) {
 			dev_kfree_skb(skb);
-			skb = NULL;
 			count++;
 			continue;
 		}
 
 		/* Buffer is good. Go on. */
 
-		prefetch(page_address(buf->page));
-		if (buf->sec_page)
-			prefetch(page_address(buf->sec_page));
+		if (likely(status & rx_not_ls)) {
+			len += priv->dma_buf_sz;
+		} else {
+			prev_len = len;
+			len = stmmac_get_rx_frame_len(priv, p, coe);
 
-		buf1_len = stmmac_rx_buf1_len(priv, p, status, len);
-		len += buf1_len;
-		buf2_len = stmmac_rx_buf2_len(priv, p, status, len);
-		len += buf2_len;
-
-		/* ACS is set; GMAC core strips PAD/FCS for IEEE 802.3
-		 * Type frames (LLC/LLC-SNAP)
-		 *
-		 * llc_snap is never checked in GMAC >= 4, so this ACS
-		 * feature is always disabled and packets need to be
-		 * stripped manually.
-		 */
-		if (unlikely(priv->synopsys_id >= DWMAC_CORE_4_00) ||
-		    unlikely(status != llc_snap)) {
-			if (buf2_len)
-				buf2_len -= ETH_FCS_LEN;
-			else
-				buf1_len -= ETH_FCS_LEN;
-
-			len -= ETH_FCS_LEN;
+			/* ACS is set; GMAC core strips PAD/FCS for IEEE 802.3
+			 * Type frames (LLC/LLC-SNAP)
+			 *
+			 * llc_snap is never checked in GMAC >= 4, so this ACS
+			 * feature is always disabled and packets need to be
+			 * stripped manually.
+			 */
+			if (unlikely(priv->synopsys_id >= DWMAC_CORE_4_00) ||
+			    unlikely(status != llc_snap))
+				len -= ETH_FCS_LEN;
 		}
 
 		if (!skb) {
-			skb = napi_alloc_skb(&ch->rx_napi, buf1_len);
+			int ret = stmmac_get_rx_header_len(priv, p, &hlen);
+
+			if (priv->sph && !ret && (hlen > 0)) {
+				sec_len = len;
+				if (!(status & rx_not_ls))
+					sec_len = sec_len - hlen;
+				len = hlen;
+
+				prefetch(page_address(buf->sec_page));
+				priv->xstats.rx_split_hdr_pkt_n++;
+			}
+
+			skb = napi_alloc_skb(&ch->rx_napi, len);
 			if (!skb) {
 				priv->dev->stats.rx_dropped++;
 				count++;
-				goto drain_data;
+				continue;
 			}
 
-			dma_sync_single_for_cpu(priv->device, buf->addr,
-						buf1_len, DMA_FROM_DEVICE);
+			dma_sync_single_for_cpu(priv->device, buf->addr, len,
+						DMA_FROM_DEVICE);
 			skb_copy_to_linear_data(skb, page_address(buf->page),
-						buf1_len);
-			skb_put(skb, buf1_len);
+						len);
+			skb_put(skb, len);
 
 			/* Data payload copied into SKB, page ready for recycle */
 			page_pool_recycle_direct(rx_q->page_pool, buf->page);
 			buf->page = NULL;
-		} else if (buf1_len) {
+		} else {
+			unsigned int buf_len = len - prev_len;
+
+			if (likely(status & rx_not_ls))
+				buf_len = priv->dma_buf_sz;
+
 			dma_sync_single_for_cpu(priv->device, buf->addr,
-						buf1_len, DMA_FROM_DEVICE);
+						buf_len, DMA_FROM_DEVICE);
 			skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
-					buf->page, 0, buf1_len,
+					buf->page, 0, buf_len,
 					priv->dma_buf_sz);
 
 			/* Data payload appended into SKB */
@@ -3646,23 +3649,22 @@ read_again:
 			buf->page = NULL;
 		}
 
-		if (buf2_len) {
+		if (sec_len > 0) {
 			dma_sync_single_for_cpu(priv->device, buf->sec_addr,
-						buf2_len, DMA_FROM_DEVICE);
+						sec_len, DMA_FROM_DEVICE);
 			skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
-					buf->sec_page, 0, buf2_len,
+					buf->sec_page, 0, sec_len,
 					priv->dma_buf_sz);
+
+			len += sec_len;
 
 			/* Data payload appended into SKB */
 			page_pool_release_page(rx_q->page_pool, buf->sec_page);
 			buf->sec_page = NULL;
 		}
 
-drain_data:
 		if (likely(status & rx_not_ls))
 			goto read_again;
-		if (!skb)
-			continue;
 
 		/* Got entire packet into SKB. Finish it. */
 
@@ -3680,14 +3682,13 @@ drain_data:
 
 		skb_record_rx_queue(skb, queue);
 		napi_gro_receive(&ch->rx_napi, skb);
-		skb = NULL;
 
 		priv->dev->stats.rx_packets++;
 		priv->dev->stats.rx_bytes += len;
 		count++;
 	}
 
-	if (status & rx_not_ls || skb) {
+	if (status & rx_not_ls) {
 		rx_q->state_saved = true;
 		rx_q->state.skb = skb;
 		rx_q->state.error = error;
@@ -4693,9 +4694,9 @@ int stmmac_dvr_probe(struct device *device,
 		/* MDIO bus Registration */
 		ret = stmmac_mdio_register(ndev);
 		if (ret < 0) {
-			dev_err_probe(priv->device, ret,
-				      "%s: MDIO bus (id: %d) registration failed\n",
-				      __func__, priv->plat->bus_id);
+			dev_err(priv->device,
+				"%s: MDIO bus (id: %d) registration failed",
+				__func__, priv->plat->bus_id);
 			goto error_mdio_register;
 		}
 	}
@@ -4712,7 +4713,6 @@ int stmmac_dvr_probe(struct device *device,
 			__func__, ret);
 		goto error_netdev_register;
 	}
-
 #ifdef CONFIG_DEBUG_FS
 	stmmac_init_fs(ndev);
 #endif
@@ -4795,7 +4795,12 @@ int stmmac_suspend(struct device *dev)
 	if (!ndev || !netif_running(ndev))
 		return 0;
 
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
+	if (!device_may_wakeup(priv->device))
+		phylink_mac_change(priv->phylink, false);
+#else
 	phylink_mac_change(priv->phylink, false);
+#endif
 
 	mutex_lock(&priv->lock);
 
@@ -4816,8 +4821,16 @@ int stmmac_suspend(struct device *dev)
 
 	/* Enable Power down mode by programming the PMT regs */
 	if (device_may_wakeup(priv->device)) {
+#ifdef CONFIG_AMLOGIC_ETH_PRIVE
+		pr_info("wzh setup wol\n");
+		if (priv->plat->mdns_wkup)
+			stmmac_pmt(priv, priv->hw, 0x120);
+		else
+			stmmac_pmt(priv, priv->hw, 0x1 << 5);
+#else
 		stmmac_pmt(priv, priv->hw, priv->wolopts);
 		priv->irq_wake = 1;
+#endif
 	} else {
 		mutex_unlock(&priv->lock);
 		rtnl_lock();
@@ -4839,6 +4852,7 @@ int stmmac_suspend(struct device *dev)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(stmmac_suspend);
+#define MAXIO_PHY_MAE0621A_ID 0x7b744411
 
 /**
  * stmmac_reset_queues_param - reset queue parameters
@@ -4911,6 +4925,10 @@ int stmmac_resume(struct device *dev)
 
 	stmmac_free_tx_skbufs(priv);
 	stmmac_clear_descriptors(priv);
+	if (ndev->phydev->drv->config_init) {
+		if (ndev->phydev->phy_id == MAXIO_PHY_MAE0621A_ID)
+			ndev->phydev->drv->config_init(ndev->phydev);
+	}
 
 	stmmac_hw_setup(ndev, false);
 	stmmac_init_coalesce(priv);

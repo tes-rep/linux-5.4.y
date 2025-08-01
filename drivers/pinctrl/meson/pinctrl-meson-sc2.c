@@ -6,6 +6,7 @@
 #include <dt-bindings/gpio/meson-sc2-gpio.h>
 #include "pinctrl-meson.h"
 #include "pinctrl-meson-axg-pmx.h"
+#include "pinctrl-module-init.h"
 
 static const struct pinctrl_pin_desc meson_sc2_periphs_pins[] = {
 	MESON_PIN(GPIOD_0),
@@ -466,7 +467,7 @@ static const unsigned int pdm_dclk_a_pins[]		= { GPIOA_15 };
 /*bank A func7 */
 static const unsigned int gen_clk_a_pins[]		= { GPIOA_15 };
 
-static struct meson_pmx_group meson_sc2_periphs_groups[] = {
+static struct meson_pmx_group meson_sc2_periphs_groups[] __initdata = {
 	GPIO_GROUP(GPIOD_0),
 	GPIO_GROUP(GPIOD_1),
 	GPIO_GROUP(GPIOD_2),
@@ -1105,7 +1106,7 @@ static const char * const nand_groups[] = {
 
 static const char * const sdcard_groups[] = {
 	"sdcard_d0_c", "sdcard_d1_c", "sdcard_d2_c", "sdcard_d3_c",
-	"sdcaed_cd_c", "sdcard_clk_c", "sdcard_cmd_c",
+	"sdcard_cd_c", "sdcard_clk_c", "sdcard_cmd_c",
 
 	"sdcard_d0_x", "sdcard_d1_x", "sdcard_d2_x", "sdcard_d3_x",
 	"sdcard_clk_x", "sdcard_cmd_x",
@@ -1217,14 +1218,14 @@ static const char * const pcieck_reqn_groups[] = {
 static const char * const iso7816_groups[] = {
 	"iso7816_clk_c", "iso7816_clk_h", "iso7816_data_c", "iso7816_clk_x",
 	"iso7816_data_x", "iso7816_data_h", "iso7816_clk_z0",
-	"iso7816_clk_z8", "iso7816_data_z1", "is7816_data_z9",
+	"iso7816_clk_z8", "iso7816_data_z1", "iso7816_data_z9",
 };
 
 static const char * const hdmitx_groups[] = {
 	"hdmitx_sda", "hdmitx_sck", "hdmitx_hpd_in",
 };
 
-static struct meson_pmx_func meson_sc2_periphs_functions[] = {
+static struct meson_pmx_func meson_sc2_periphs_functions[] __initdata = {
 	FUNCTION(gpio_periphs),
 	FUNCTION(uart_a),
 	FUNCTION(uart_b),
@@ -1305,7 +1306,7 @@ static struct meson_bank meson_sc2_periphs_banks[] = {
 };
 
 static struct meson_pmx_bank meson_sc2_periphs_pmx_banks[] = {
-	/*name	            first	 lask        reg offset*/
+	/*name	            first	 last        reg offset*/
 	BANK_PMX("Z",      GPIOZ_0,     GPIOZ_15,    0x6, 0),
 	BANK_PMX("X",      GPIOX_0,     GPIOX_19,    0x3, 0),
 	BANK_PMX("H",      GPIOH_0,     GPIOH_8,     0xb, 0),
@@ -1349,9 +1350,23 @@ static struct platform_driver meson_sc2_pinctrl_driver = {
 	.probe  = meson_pinctrl_probe,
 	.driver = {
 		.name	= "meson-sc2-pinctrl",
-		.of_match_table = meson_sc2_pinctrl_dt_match,
 	},
 };
 
-module_platform_driver(meson_sc2_pinctrl_driver);
-MODULE_LICENSE("Dual BSD/GPL");
+#ifndef MODULE
+static int __init sc2_pmx_init(void)
+{
+	meson_sc2_pinctrl_driver.driver.of_match_table =
+			meson_sc2_pinctrl_dt_match;
+	return platform_driver_register(&meson_sc2_pinctrl_driver);
+}
+arch_initcall(sc2_pmx_init);
+
+#else
+int __init meson_sc2_pinctrl_init(void)
+{
+	meson_sc2_pinctrl_driver.driver.of_match_table =
+			meson_sc2_pinctrl_dt_match;
+	return platform_driver_register(&meson_sc2_pinctrl_driver);
+}
+#endif

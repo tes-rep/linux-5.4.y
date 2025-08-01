@@ -19,10 +19,6 @@
 #include <linux/module.h>
 #include <linux/netdevice.h>
 
-#define DRIVER_VERSION		"1.2.9"
-#define DRIVER_NAME_100M	"JL1xxx Fast Ethernet " DRIVER_VERSION
-#define DRIVER_NAME_1000M	"JL2xxx Gigabit Ethernet " DRIVER_VERSION
-
 MODULE_DESCRIPTION("JLSemi PHY driver");
 MODULE_AUTHOR("Gangqiao Kuang");
 MODULE_LICENSE("GPL");
@@ -51,6 +47,7 @@ static int jl1xxx_probe(struct phy_device *phydev)
 {
 	struct device *dev = jlsemi_get_mdio(phydev);
 	struct jl1xxx_priv *jl1xxx = NULL;
+	struct device *d = NULL;
 	int err;
 
 	jl1xxx = devm_kzalloc(dev, sizeof(*jl1xxx), GFP_KERNEL);
@@ -59,15 +56,22 @@ static int jl1xxx_probe(struct phy_device *phydev)
 
 	phydev->priv = jl1xxx;
 
+	d = jlsemi_get_device(phydev);
 #if (JLSEMI_KERNEL_DEVICE_TREE_USE)
-	if (!dev->of_node)
+	d->of_node = of_find_compatible_node(NULL, NULL,
+					    "ethernet-phy-id937c.4020");
+	if (!d->of_node)
 		JLSEMI_PHY_MSG("%s: Find device node failed\n", __func__);
 #endif
+	/* Select operation mode */
+	jl1xxx_operation_mode_select(phydev);
+
 	err = jl1xxx_operation_args_get(phydev);
 	if (err < 0)
 		return err;
 
-	if (jl1xxx->intr.enable & JL1XXX_INTR_STATIC_OP_EN)
+	if (jl1xxx->intr.enable & JL1XXX_INTR_STATIC_OP_EN ||
+	    jl1xxx->intr.enable & JL1XXX_INTR_DYNAMIC_OP_EN)
 		phydev->irq = JL1XXX_INTR_IRQ;
 
 	jl1xxx->static_inited = false;
@@ -154,14 +158,13 @@ static void jl1xxx_remove(struct phy_device *phydev)
 		devm_kfree(dev, priv);
 }
 
-#if (JLSEMI_PHY_WOL)
 static void jl1xxx_get_wol(struct phy_device *phydev,
 			   struct ethtool_wolinfo *wol)
 {
 	struct jl1xxx_priv *priv = phydev->priv;
 	int wol_en;
 
-	if (priv->wol.ethtool) {
+	if (priv->wol.enable & JL1XXX_WOL_DYNAMIC_OP_EN) {
 		wol->supported = WAKE_MAGIC;
 		wol->wolopts = 0;
 
@@ -178,7 +181,7 @@ static int jl1xxx_set_wol(struct phy_device *phydev,
 	struct jl1xxx_priv *priv = phydev->priv;
 	int err;
 
-	if (priv->wol.ethtool) {
+	if (priv->wol.enable & JL1XXX_WOL_DYNAMIC_OP_EN) {
 		if (wol->wolopts & WAKE_MAGIC) {
 			err = jl1xxx_wol_dynamic_op_set(phydev);
 			if (err < 0)
@@ -188,7 +191,6 @@ static int jl1xxx_set_wol(struct phy_device *phydev,
 
 	return 0;
 }
-#endif
 
 static int jl1xxx_suspend(struct phy_device *phydev)
 {
@@ -204,6 +206,7 @@ static int jl2xxx_probe(struct phy_device *phydev)
 {
 	struct device *dev = jlsemi_get_mdio(phydev);
 	struct jl2xxx_priv *jl2xxx = NULL;
+	struct device *d = NULL;
 	int err;
 
 	jl2xxx = devm_kzalloc(dev, sizeof(*jl2xxx), GFP_KERNEL);
@@ -212,15 +215,22 @@ static int jl2xxx_probe(struct phy_device *phydev)
 
 	phydev->priv = jl2xxx;
 
+	d = jlsemi_get_device(phydev);
 #if (JLSEMI_KERNEL_DEVICE_TREE_USE)
-	if (!dev->of_node)
+	d->of_node = of_find_compatible_node(NULL, NULL,
+					    "ethernet-phy-id937c.4030");
+	if (!d->of_node)
 		JLSEMI_PHY_MSG("%s: Find device node failed\n", __func__);
 #endif
+	/* Select operation mode */
+	jl2xxx_operation_mode_select(phydev);
+
 	err = jl2xxx_operation_args_get(phydev);
 	if (err < 0)
 		return err;
 
-	if (jl2xxx->intr.enable & JL2XXX_INTR_STATIC_OP_EN)
+	if (jl2xxx->intr.enable & JL2XXX_INTR_STATIC_OP_EN ||
+	    jl2xxx->intr.enable & JL2XXX_INTR_DYNAMIC_OP_EN)
 		phydev->irq = JL2XXX_INTR_IRQ;
 
 	jl2xxx->static_inited = false;
@@ -237,6 +247,10 @@ static int jl2xxx_config_init(struct phy_device *phydev)
 {
 	struct jl2xxx_priv *priv = phydev->priv;
 	int ret;
+
+	ret = config_init_r4p1(phydev);
+	if (ret < 0)
+		return ret;
 
 	if (!priv->static_inited) {
 #if (JLSEMI_DEBUG_INFO)
@@ -308,11 +322,6 @@ static int jl2xxx_read_status(struct phy_device *phydev)
 	return genphy_read_status(phydev);
 }
 
-static int jl1xxx_config_aneg(struct phy_device *phydev)
-{
-	return genphy_config_aneg(phydev);
-}
-
 static int jl2xxx_config_aneg(struct phy_device *phydev)
 {
 	u16 phy_mode;
@@ -326,8 +335,7 @@ static int jl2xxx_config_aneg(struct phy_device *phydev)
 		return 0;
 
 	if ((phydev->interface != PHY_INTERFACE_MODE_SGMII) &&
-	    ((phy_mode == JL2XXX_FIBER_RGMII_MODE) ||
-	    (phy_mode == JL2XXX_UTP_FIBER_RGMII_MODE)))
+	    (phy_mode == JL2XXX_FIBER_RGMII_MODE))
 		return jl2xxx_config_aneg_fiber(phydev);
 
 	return genphy_config_aneg(phydev);
@@ -343,14 +351,13 @@ static int jl2xxx_resume(struct phy_device *phydev)
 	return genphy_resume(phydev);
 }
 
-#if (JLSEMI_PHY_WOL)
 static void jl2xxx_get_wol(struct phy_device *phydev,
 			   struct ethtool_wolinfo *wol)
 {
 	struct jl2xxx_priv *priv = phydev->priv;
 	int wol_en;
 
-	if (priv->wol.ethtool) {
+	if (priv->wol.enable & JL2XXX_WOL_DYNAMIC_OP_EN) {
 		wol->supported = WAKE_MAGIC;
 		wol->wolopts = 0;
 
@@ -367,7 +374,7 @@ static int jl2xxx_set_wol(struct phy_device *phydev,
 	struct jl2xxx_priv *priv = phydev->priv;
 	int err;
 
-	if (priv->wol.ethtool) {
+	if (priv->wol.enable & JL2XXX_WOL_DYNAMIC_OP_EN) {
 		if (wol->wolopts & WAKE_MAGIC) {
 			err = jl2xxx_wol_dynamic_op_set(phydev);
 			if (err < 0)
@@ -377,7 +384,6 @@ static int jl2xxx_set_wol(struct phy_device *phydev,
 
 	return 0;
 }
-#endif
 
 #if (JL2XXX_PHY_TUNABLE)
 static int jl2xxx_get_tunable(struct phy_device *phydev,
@@ -387,12 +393,12 @@ static int jl2xxx_get_tunable(struct phy_device *phydev,
 
 	switch (tuna->id) {
 	case ETHTOOL_PHY_FAST_LINK_DOWN:
-		if (priv->fld.ethtool)
+		if (priv->fld.enable & JL2XXX_FLD_DYNAMIC_OP_EN)
 			return jl2xxx_fld_dynamic_op_get(phydev, data);
 		else
 			return 0;
 	case ETHTOOL_PHY_DOWNSHIFT:
-		if (priv->downshift.ethtool)
+		if (priv->downshift.enable & JL2XXX_DSFT_DYNAMIC_OP_EN)
 			return jl2xxx_downshift_dynamic_op_get(phydev, data);
 		else
 			return 0;
@@ -410,12 +416,12 @@ static int jl2xxx_set_tunable(struct phy_device *phydev,
 
 	switch (tuna->id) {
 	case ETHTOOL_PHY_FAST_LINK_DOWN:
-		if (priv->fld.ethtool)
+		if (priv->fld.enable & JL2XXX_FLD_DYNAMIC_OP_EN)
 			return jl2xxx_fld_dynamic_op_set(phydev, data);
 		else
 			return 0;
 	case ETHTOOL_PHY_DOWNSHIFT:
-		if (priv->downshift.ethtool)
+		if (priv->downshift.enable & JL2XXX_DSFT_DYNAMIC_OP_EN)
 			return jl2xxx_downshift_dynamic_op_set(phydev,
 							*(const u8 *)data);
 		else
@@ -484,75 +490,43 @@ static void jl2xxx_remove(struct phy_device *phydev)
 		devm_kfree(dev, priv);
 }
 
-static inline int jlsemi_aneg_done(struct phy_device *phydev)
-{
-	int retval = phy_read(phydev, MII_BMSR);
-
-	return (retval < 0) ? retval : (retval & BMSR_ANEGCOMPLETE);
-}
-
-static int jl2xxx_aneg_done(struct phy_device *phydev)
-{
-	u16 phy_mode;
-	int val;
-
-	val = jlsemi_read_paged(phydev, JL2XXX_PAGE18,
-				JL2XXX_WORK_MODE_REG);
-	phy_mode = val & JL2XXX_WORK_MODE_MASK;
-
-	if (phydev->interface == PHY_INTERFACE_MODE_SGMII)
-		return 0;
-
-	// fiber not an complite
-	if ((phydev->interface != PHY_INTERFACE_MODE_SGMII) &&
-	    ((phy_mode == JL2XXX_FIBER_RGMII_MODE) ||
-	    (phy_mode == JL2XXX_UTP_FIBER_RGMII_MODE)))
-		return BMSR_ANEGCOMPLETE;
-
-	return jlsemi_aneg_done(phydev);
-}
-
-
 static struct phy_driver jlsemi_drivers[] = {
 	{
 		.phy_id		= JL1XXX_PHY_ID,
 		.phy_id_mask    = JLSEMI_PHY_ID_MASK,
-		.name           = DRIVER_NAME_100M,
+		.name           = "JL1xxx Fast Ethernet",
 		/* PHY_BASIC_FEATURES */
 		.features	= PHY_BASIC_FEATURES,
 		.probe		= jl1xxx_probe,
+		.aneg_done	= jlsemi_aneg_done,
 		.config_intr	= jl1xxx_config_intr,
+		.soft_reset	= jlsemi_soft_reset,
 		.read_status	= jl1xxx_read_status,
 		.config_init    = jl1xxx_config_init,
-		.config_aneg    = jl1xxx_config_aneg,
-		.aneg_done	= jlsemi_aneg_done,
-		.suspend        = jl1xxx_suspend,
-		.resume         = jl1xxx_resume,
 		.remove		= jl1xxx_remove,
-#if (JLSEMI_PHY_WOL)
 		.get_wol	= jl1xxx_get_wol,
 		.set_wol	= jl1xxx_set_wol,
-#endif
+		.suspend        = jl1xxx_suspend,
+		.resume         = jl1xxx_resume,
 	},
 	{
 		.phy_id         = JL2XXX_PHY_ID,
 		.phy_id_mask    = JLSEMI_PHY_ID_MASK,
-		.name           = DRIVER_NAME_1000M,
+		.name           = "JL2xxx Gigabit Ethernet",
 		/* PHY_BASIC_FEATURES */
 		.features	= PHY_GBIT_FEATURES,
 		.probe		= jl2xxx_probe,
 		.config_intr	= jl2xxx_config_intr,
+		.soft_reset	= jlsemi_soft_reset,
+		.aneg_done	= jlsemi_aneg_done,
 		.read_status	= jl2xxx_read_status,
 		.config_init    = jl2xxx_config_init,
 		.config_aneg    = jl2xxx_config_aneg,
-		.aneg_done	= jl2xxx_aneg_done,
 		.suspend        = jl2xxx_suspend,
 		.resume         = jl2xxx_resume,
 		.remove		= jl2xxx_remove,
-#if (JLSEMI_PHY_WOL)
 		.get_wol	= jl2xxx_get_wol,
 		.set_wol	= jl2xxx_set_wol,
-#endif
 #if (JL2XXX_PHY_TUNABLE)
 		.get_tunable	= jl2xxx_get_tunable,
 		.set_tunable	= jl2xxx_set_tunable,

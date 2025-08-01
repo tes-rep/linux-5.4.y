@@ -59,8 +59,8 @@ void dmam_free_coherent(struct device *dev, size_t size, void *vaddr,
 {
 	struct dma_devres match_data = { size, vaddr, dma_handle };
 
-	WARN_ON(devres_destroy(dev, dmam_release, dmam_match, &match_data));
 	dma_free_coherent(dev, size, vaddr, dma_handle);
+	WARN_ON(devres_destroy(dev, dmam_release, dmam_match, &match_data));
 }
 EXPORT_SYMBOL(dmam_free_coherent);
 
@@ -135,6 +135,7 @@ int dma_common_get_sgtable(struct device *dev, struct sg_table *sgt,
 		sg_set_page(sgt->sgl, page, PAGE_ALIGN(size), 0);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(dma_common_get_sgtable);
 
 /*
  * The whole dma_get_sgtable() idea is fundamentally unsafe - it seems
@@ -223,6 +224,7 @@ int dma_common_mmap(struct device *dev, struct vm_area_struct *vma,
 	return -ENXIO;
 #endif /* CONFIG_MMU */
 }
+EXPORT_SYMBOL_GPL(dma_common_mmap);
 
 /**
  * dma_can_mmap - check if a given device supports dma_mmap_*

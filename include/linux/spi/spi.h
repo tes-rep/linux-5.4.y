@@ -13,6 +13,7 @@
 #include <linux/completion.h>
 #include <linux/scatterlist.h>
 #include <linux/gpio/consumer.h>
+#include <linux/android_kabi.h>
 
 struct dma_chan;
 struct property_entry;
@@ -152,7 +153,6 @@ struct spi_device {
 #define	SPI_MODE_1	(0|SPI_CPHA)
 #define	SPI_MODE_2	(SPI_CPOL|0)
 #define	SPI_MODE_3	(SPI_CPOL|SPI_CPHA)
-#define	SPI_MODE_X_MASK	(SPI_CPOL|SPI_CPHA)
 #define	SPI_CS_HIGH	0x04			/* chipselect active high? */
 #define	SPI_LSB_FIRST	0x08			/* per-word bits-on-wire */
 #define	SPI_3WIRE	0x10			/* SI/SO signals shared */
@@ -178,6 +178,9 @@ struct spi_device {
 
 	/* the statistics */
 	struct spi_statistics	statistics;
+
+	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_RESERVE(2);
 
 	/*
 	 * likely need more hooks for more protocol options affecting how
@@ -263,6 +266,8 @@ struct spi_driver {
 	int			(*remove)(struct spi_device *spi);
 	void			(*shutdown)(struct spi_device *spi);
 	struct device_driver	driver;
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 static inline struct spi_driver *to_spi_driver(struct device_driver *drv)
@@ -483,9 +488,6 @@ struct spi_controller {
 	/* I/O mutex */
 	struct mutex		io_mutex;
 
-	/* Used to avoid adding the same CS twice */
-	struct mutex		add_lock;
-
 	/* lock and mutex for SPI bus locking */
 	spinlock_t		bus_lock_spinlock;
 	struct mutex		bus_lock_mutex;
@@ -611,6 +613,9 @@ struct spi_controller {
 	void			*dummy_tx;
 
 	int (*fw_translate_cs)(struct spi_controller *ctlr, unsigned cs);
+
+	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_RESERVE(2);
 };
 
 static inline void *spi_controller_get_devdata(struct spi_controller *ctlr)
@@ -869,6 +874,8 @@ struct spi_transfer {
 	u32		effective_speed_hz;
 
 	struct list_head transfer_list;
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 /**
@@ -935,6 +942,8 @@ struct spi_message {
 
 	/* list of spi_res reources when the spi message is processed */
 	struct list_head        resources;
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 static inline void spi_message_init_no_memset(struct spi_message *m)
@@ -1355,6 +1364,8 @@ struct spi_board_info {
 	 * where the default of SPI_CS_HIGH = 0 is wrong.
 	 */
 	u32		mode;
+
+	ANDROID_KABI_RESERVE(1);
 
 	/* ... may need additional spi_device chip config data here.
 	 * avoid stuff protocol drivers can set; but include stuff

@@ -202,8 +202,9 @@
 	pinctrl-0 = <&eth_rgmii_pins>;
 	pinctrl-names = "default";
 
+	phy-mode = "rgmii";
 	phy-handle = <&eth_phy>;
-	phy-mode = "rgmii-id";
+	amlogic,tx-delay-ns = <4>;
 
 	nvmem-cells = <&ethernet_mac_address>;
 	nvmem-cell-names = "mac-address";

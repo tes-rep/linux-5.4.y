@@ -16,12 +16,13 @@
 #include "clk-mpll.h"
 #include "clk-pll.h"
 #include "clk-regmap.h"
-#include "clk-secure.h"
 #include "clk-cpu-dyndiv.h"
 #include "vid-pll-div.h"
 #include "clk-dualdiv.h"
 #include "sc2.h"
+#include "clkcs_init.h"
 #include <dt-bindings/clock/amlogic,sc2-clkc.h>
+#include "clk-secure.h"
 
 static DEFINE_SPINLOCK(meson_clk_lock);
 
@@ -97,6 +98,27 @@ static const struct clk_ops meson_pll_clk_no_ops = {};
  * od is for 32 bit.
  */
 
+#ifdef CONFIG_ARM
+static const struct pll_params_table sc2_sys_pll_params_table[] = {
+	PLL_PARAMS(168, 1, 2), /*DCO=4032M OD=1008M*/
+	PLL_PARAMS(184, 1, 2), /*DCO=4416M OD=1104M*/
+	PLL_PARAMS(200, 1, 2), /*DCO=4800M OD=1200M*/
+	PLL_PARAMS(216, 1, 2), /*DCO=5184M OD=1296M*/
+	PLL_PARAMS(233, 1, 2), /*DCO=5592M OD=1398M*/
+	PLL_PARAMS(234, 1, 2), /*DCO=5616M OD=1404M*/
+	PLL_PARAMS(249, 1, 2), /*DCO=5976M OD=1494M*/
+	PLL_PARAMS(125, 1, 1), /*DCO=3000M OD=1500M*/
+	PLL_PARAMS(126, 1, 1), /*DCO=3024M OD=1512M*/
+	PLL_PARAMS(134, 1, 1), /*DCO=3216M OD=1608M*/
+	PLL_PARAMS(142, 1, 1), /*DCO=3408M OD=1704M*/
+	PLL_PARAMS(150, 1, 1), /*DCO=3600M OD=1800M*/
+	PLL_PARAMS(158, 1, 1), /*DCO=3792M OD=1896M*/
+	PLL_PARAMS(159, 1, 1), /*DCO=3816M OD=1908*/
+	PLL_PARAMS(160, 1, 1), /*DCO=3840M OD=1920M*/
+	PLL_PARAMS(167, 1, 1), /*DCO=4008M OD=2004M*/
+	{ /* sentinel */ }
+};
+#else
 static const struct pll_params_table sc2_sys_pll_params_table[] = {
 	PLL_PARAMS(168, 1), /*DCO=4032M OD=1008M*/
 	PLL_PARAMS(184, 1), /*DCO=4416M OD=1104M*/
@@ -116,6 +138,7 @@ static const struct pll_params_table sc2_sys_pll_params_table[] = {
 	PLL_PARAMS(167, 1), /*DCO=4008M OD=2004M*/
 	{ /* sentinel */ }
 };
+#endif
 
 static struct clk_regmap sc2_sys_pll_dco = {
 	.data = &(struct meson_clk_pll_data){
@@ -134,6 +157,14 @@ static struct clk_regmap sc2_sys_pll_dco = {
 			.shift   = 10,
 			.width   = 5,
 		},
+#ifdef CONFIG_ARM
+		/* od for 32bit */
+		.od = {
+			.reg_off = ANACTRL_SYSPLL_CTRL0,
+			.shift	 = 16,
+			.width	 = 3,
+		},
+#endif
 		.table = sc2_sys_pll_params_table,
 		.l = {
 			.reg_off = ANACTRL_SYSPLL_CTRL0,
@@ -156,6 +187,41 @@ static struct clk_regmap sc2_sys_pll_dco = {
 	},
 };
 
+#ifdef CONFIG_ARM
+/*
+ * If DCO frequency is greater than 2.1G in 32bit,it will
+ * overflow due to the callback .round_rate returns
+ *  long (-2147483648 ~ +2147483647).
+ * The OD output value is under 2G, For 32bit, the dco and
+ * od should be described together to avoid overflow.
+ * Beside, I have tried another methods but failed.
+ * 1) change the freq unit to kHZ, it will crash (fixed xtal
+ *   = 24000) and it will influences clock users.
+ * 2) change the return value for .round_rate, a greater many
+ *   code will be modified, related to whole CCF.
+ * 3) dco pll using kHZ, other clock using HZ, when calculate pll
+ *    it will be a lot of mass because of unit differences.
+ *
+ * Keep Consistent with 64bit, creat a Virtual clock for sys pll
+ */
+static struct clk_regmap sc2_sys_pll = {
+	.hw.init = &(struct clk_init_data){
+		.name = "sys_pll",
+		.ops = &meson_pll_clk_no_ops,
+		.parent_hws = (const struct clk_hw *[]) {
+			&sc2_sys_pll_dco.hw
+		},
+		.num_parents = 1,
+		/*
+		 * sys pll is used by cpu clock , it is initialized
+		 * to 1200M in bl2, CLK_IGNORE_UNUSED is needed to
+		 * prevent the system hang up which will be called
+		 * by clk_disable_unused
+		 */
+		.flags = CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED,
+	},
+};
+#else
 static struct clk_regmap sc2_sys_pll = {
 	.data = &(struct clk_regmap_div_data){
 		.offset = ANACTRL_SYSPLL_CTRL0,
@@ -173,6 +239,7 @@ static struct clk_regmap sc2_sys_pll = {
 		.flags = CLK_SET_RATE_PARENT,
 	},
 };
+#endif
 
 static struct clk_fixed_factor sc2_fclk_div2_div = {
 	.mult = 1,
@@ -347,12 +414,21 @@ static struct clk_regmap sc2_fclk_div2p5 = {
 	},
 };
 
+#ifdef CONFIG_ARM
+static const struct pll_params_table sc2_gp0_pll_table[] = {
+	PLL_PARAMS(141, 1, 2), /* DCO = 3384M OD = 2 PLL = 846M */
+	PLL_PARAMS(132, 1, 2), /* DCO = 3168M OD = 2 PLL = 792M */
+	PLL_PARAMS(248, 1, 3), /* DCO = 5952M OD = 3 PLL = 744M */
+	{ /* sentinel */  }
+};
+#else
 static const struct pll_params_table sc2_gp0_pll_table[] = {
 	PLL_PARAMS(141, 1), /* DCO = 3384M OD = 2 PLL = 846M */
 	PLL_PARAMS(132, 1), /* DCO = 3168M OD = 2 PLL = 792M */
 	PLL_PARAMS(248, 1), /* DCO = 5952M OD = 3 PLL = 744M */
 	{ /* sentinel */  }
 };
+#endif
 
 /*
  * Internal gp0 pll emulation configuration parameters
@@ -383,6 +459,14 @@ static struct clk_regmap sc2_gp0_pll_dco = {
 			.shift   = 10,
 			.width   = 5,
 		},
+#ifdef CONFIG_ARM
+		/* for 32bit */
+		.od = {
+			.reg_off = ANACTRL_GP0PLL_CTRL0,
+			.shift	 = 16,
+			.width	 = 3,
+		},
+#endif
 		.frac = {
 			.reg_off = ANACTRL_GP0PLL_CTRL1,
 			.shift   = 0,
@@ -411,6 +495,19 @@ static struct clk_regmap sc2_gp0_pll_dco = {
 	},
 };
 
+#ifdef CONFIG_ARM
+static struct clk_regmap sc2_gp0_pll = {
+	.hw.init = &(struct clk_init_data){
+		.name = "gp0_pll",
+		.ops = &meson_pll_clk_no_ops,
+		.parent_hws = (const struct clk_hw *[]) {
+			&sc2_gp0_pll_dco.hw
+		},
+		.num_parents = 1,
+		.flags = CLK_SET_RATE_PARENT,
+	},
+};
+#else
 static struct clk_regmap sc2_gp0_pll = {
 	.data = &(struct clk_regmap_div_data){
 		.offset = ANACTRL_GP0PLL_CTRL0,
@@ -429,12 +526,21 @@ static struct clk_regmap sc2_gp0_pll = {
 		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE,
 	},
 };
+#endif
 
+#ifdef CONFIG_ARM
+static const struct pll_params_table sc2_gp1_pll_table[] = {
+	PLL_PARAMS(200, 1, 2), /*DCO=4800M OD=1200M*/
+	PLL_PARAMS(125, 1, 1), /*DCO=3000M OD=1500M*/
+	{ /* sentinel */  }
+};
+#else
 static const struct pll_params_table sc2_gp1_pll_table[] = {
 	PLL_PARAMS(200, 1), /*DCO=4800M OD=1200M*/
 	PLL_PARAMS(125, 1), /*DCO=3000M OD=1500M*/
 	{ /* sentinel */  }
 };
+#endif
 
 static struct clk_regmap sc2_gp1_pll_dco = {
 	.data = &(struct meson_clk_pll_data){
@@ -512,7 +618,7 @@ static struct clk_regmap sc2_cpu_clk_premux0 = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu_clk_dyn0_sel",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_data = (const struct clk_parent_data []) {
 			{ .fw_name = "xtal", },
 			{ .hw = &sc2_fclk_div2.hw },
@@ -532,7 +638,7 @@ static struct clk_regmap sc2_cpu_clk_premux1 = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu_clk_dyn1_sel",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_data = (const struct clk_parent_data []) {
 			{ .fw_name = "xtal", },
 			{ .hw = &sc2_fclk_div2.hw },
@@ -579,7 +685,7 @@ static struct clk_regmap sc2_cpu_clk_postmux0 = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu_clk_dyn0",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk_premux0.hw,
 			&sc2_cpu_clk_mux0_div.hw,
@@ -598,7 +704,7 @@ static struct clk_regmap sc2_cpu_clk_mux1_div = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu_clk_dyn1_div",
-		.ops = &meson_clk_regmap_secure_divider_ro_ops,
+		.ops = &clk_regmap_secure_divider_ro_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk_premux1.hw
 		},
@@ -615,7 +721,7 @@ static struct clk_regmap sc2_cpu_clk_postmux1 = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu_clk_dyn1",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk_premux1.hw,
 			&sc2_cpu_clk_mux1_div.hw,
@@ -636,7 +742,7 @@ static struct clk_regmap sc2_cpu_clk_dyn = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu_clk_dyn",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk_postmux0.hw,
 			&sc2_cpu_clk_postmux1.hw,
@@ -656,7 +762,7 @@ static struct clk_regmap sc2_cpu_clk = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu_clk",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk_dyn.hw,
 			&sc2_sys_pll.hw,
@@ -677,7 +783,7 @@ static struct clk_regmap sc2_dsu_clk_premux0 = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk_dyn0_sel",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_data = (const struct clk_parent_data []) {
 			{ .fw_name = "xtal", },
 			{ .hw = &sc2_fclk_div2.hw },
@@ -698,7 +804,7 @@ static struct clk_regmap sc2_dsu_clk_premux1 = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk_dyn1_sel",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_data = (const struct clk_parent_data []) {
 			{ .fw_name = "xtal", },
 			{ .hw = &sc2_fclk_div2.hw },
@@ -719,7 +825,7 @@ static struct clk_regmap sc2_dsu_clk_mux0_div = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk_dyn0_div",
-		.ops = &meson_clk_regmap_secure_divider_ro_ops,
+		.ops = &clk_regmap_secure_divider_ro_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_dsu_clk_premux0.hw
 		},
@@ -737,7 +843,7 @@ static struct clk_regmap sc2_dsu_clk_postmux0 = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk_dyn0",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_dsu_clk_premux0.hw,
 			&sc2_dsu_clk_mux0_div.hw,
@@ -756,7 +862,7 @@ static struct clk_regmap sc2_dsu_clk_mux1_div = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk_dyn1_div",
-		.ops = &meson_clk_regmap_secure_divider_ro_ops,
+		.ops = &clk_regmap_secure_divider_ro_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_dsu_clk_premux1.hw
 		},
@@ -774,7 +880,7 @@ static struct clk_regmap sc2_dsu_clk_postmux1 = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk_dyn1",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_dsu_clk_premux1.hw,
 			&sc2_dsu_clk_mux1_div.hw,
@@ -793,7 +899,7 @@ static struct clk_regmap sc2_dsu_clk_dyn = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk_dyn",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_dsu_clk_postmux0.hw,
 			&sc2_dsu_clk_postmux1.hw,
@@ -812,7 +918,7 @@ static struct clk_regmap sc2_dsu_final_clk = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk_final",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_dsu_clk_dyn.hw,
 			&sc2_sys_pll.hw,
@@ -831,7 +937,7 @@ static struct clk_regmap sc2_cpu1_clk = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu1_clk",
-		.ops = &meson_clk_regmap_secure_mux_ro_ops,
+		.ops = &clk_regmap_secure_mux_ro_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk.hw,
 			/* This CPU also have a dedicated clock tree */
@@ -849,7 +955,7 @@ static struct clk_regmap sc2_cpu2_clk = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu2_clk",
-		.ops = &meson_clk_regmap_secure_mux_ro_ops,
+		.ops = &clk_regmap_secure_mux_ro_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk.hw,
 			/* This CPU also have a dedicated clock tree */
@@ -867,7 +973,7 @@ static struct clk_regmap sc2_cpu3_clk = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cpu3_clk",
-		.ops = &meson_clk_regmap_secure_mux_ro_ops,
+		.ops = &clk_regmap_secure_mux_ro_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk.hw,
 			/* This CPU also have a dedicated clock tree */
@@ -885,7 +991,7 @@ static struct clk_regmap sc2_dsu_clk = {
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "dsu_clk",
-		.ops = &meson_clk_regmap_secure_mux_ops,
+		.ops = &clk_regmap_secure_mux_ops,
 		.parent_hws = (const struct clk_hw *[]) {
 			&sc2_cpu_clk.hw,
 			&sc2_dsu_final_clk.hw,
@@ -1097,16 +1203,16 @@ static struct sc2_dsu_clk_postmux_nb_data sc2_dsu_clk_postmux0_nb_data = {
 	.nb.notifier_call = sc2_dsu_clk_postmux_notifier_cb,
 };
 
-static const struct pll_params_table sc2_hifi_pll_table[] = {
-	PLL_PARAMS(150, 1), /* DCO = 1806.336M */
-	{ /* sentinel */  }
+static const struct pll_mult_range sc2_hifi_pll_m = {
+	.min = 125,
+	.max = 250,
 };
 
 /*
  * Internal hifi pll emulation configuration parameters
  */
 static const struct reg_sequence sc2_hifi_init_regs[] = {
-	{ .reg = ANACTRL_HIFIPLL_CTRL1,	.def = 0x00010e56 },
+	{ .reg = ANACTRL_HIFIPLL_CTRL1,	.def = 0x0001ae14 },
 	{ .reg = ANACTRL_HIFIPLL_CTRL2,	.def = 0x00000000 },
 	{ .reg = ANACTRL_HIFIPLL_CTRL3,	.def = 0x6a285c00 },
 	{ .reg = ANACTRL_HIFIPLL_CTRL4,	.def = 0x65771290 },
@@ -1129,7 +1235,7 @@ static struct clk_regmap sc2_hifi_pll_dco = {
 		.n = {
 			.reg_off = ANACTRL_HIFIPLL_CTRL0,
 			.shift   = 10,
-			.width   = 5,
+			.width   = 1,  /* keep always n = 1 */
 		},
 		.frac = {
 			.reg_off = ANACTRL_HIFIPLL_CTRL1,
@@ -1146,7 +1252,7 @@ static struct clk_regmap sc2_hifi_pll_dco = {
 			.shift   = 29,
 			.width   = 1,
 		},
-		.table = sc2_hifi_pll_table,
+		.range = &sc2_hifi_pll_m,
 		.init_regs = sc2_hifi_init_regs,
 		.init_count = ARRAY_SIZE(sc2_hifi_init_regs),
 		.flags = CLK_MESON_PLL_ROUND_CLOSEST,
@@ -1198,11 +1304,18 @@ static const struct reg_sequence sc2_pcie_pll_init_regs[] = {
 	{ .reg = ANACTRL_PCIEPLL_CTRL2,	.def = 0x00001000 }
 };
 
+#ifdef CONFIG_ARM64
 /* Keep a single entry table for recalc/round_rate() ops */
 static const struct pll_params_table sc2_pcie_pll_table[] = {
 	PLL_PARAMS(200, 1),
 	{0, 0}
 };
+#else
+static const struct pll_params_table sc2_pcie_pll_table[] = {
+	PLL_PARAMS(200, 1, 0),
+	{0, 0, 0}
+};
+#endif
 
 static struct clk_regmap sc2_pcie_pll_dco = {
 	.data = &(struct meson_clk_pll_data){
@@ -1278,7 +1391,7 @@ static struct clk_regmap sc2_pcie_pll_od = {
 			&sc2_pcie_pll_dco_div2.hw
 		},
 		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE,
 	},
 };
 
@@ -1682,7 +1795,7 @@ static struct clk_regmap sc2_mpll3 = {
  *	   when bit 28 = 0
  *	         f = 24M/N0
  *	   when bit 28 = 1
- *	         output N1 and N2 in rurn.
+ *	         output N1 and N2 in turns.
  *	   T = (x*T1 + y*T2)/x+y
  *	   f = (24M/(N0*M0 + N1*M1)) * (M0 + M1)
  *	   f: the frequecy value (HZ)
@@ -4400,7 +4513,7 @@ static struct clk_regmap sc2_sd_emmc_c_clk0_sel = {
 		.ops = &clk_regmap_mux_ops,
 		.parent_data = sc2_sd_emmc_clk0_parent_data,
 		.num_parents = ARRAY_SIZE(sc2_sd_emmc_clk0_parent_data),
-		.flags = CLK_SET_RATE_PARENT
+		.flags = CLK_GET_RATE_NOCACHE
 	},
 };
 
@@ -4417,7 +4530,7 @@ static struct clk_regmap sc2_sd_emmc_c_clk0_div = {
 			&sc2_sd_emmc_c_clk0_sel.hw
 		},
 		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT
+		.flags = CLK_GET_RATE_NOCACHE
 	},
 };
 
@@ -4433,7 +4546,7 @@ static struct clk_regmap sc2_sd_emmc_c_clk0 = {
 			&sc2_sd_emmc_c_clk0_div.hw
 		},
 		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT
+		.flags = CLK_GET_RATE_NOCACHE
 	},
 };
 
@@ -4449,7 +4562,8 @@ static struct clk_regmap sc2_sd_emmc_a_clk0_sel = {
 		.ops = &clk_regmap_mux_ops,
 		.parent_data = sc2_sd_emmc_clk0_parent_data,
 		.num_parents = ARRAY_SIZE(sc2_sd_emmc_clk0_parent_data),
-		.flags = CLK_SET_RATE_PARENT,
+		.flags = CLK_GET_RATE_NOCACHE | CLK_IGNORE_UNUSED |
+			CLK_SET_RATE_PARENT,
 	},
 };
 
@@ -4466,7 +4580,8 @@ static struct clk_regmap sc2_sd_emmc_a_clk0_div = {
 			&sc2_sd_emmc_a_clk0_sel.hw
 		},
 		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
+		.flags = CLK_GET_RATE_NOCACHE | CLK_IGNORE_UNUSED |
+			CLK_SET_RATE_PARENT,
 	},
 };
 
@@ -4482,7 +4597,8 @@ static struct clk_regmap sc2_sd_emmc_a_clk0 = {
 			&sc2_sd_emmc_a_clk0_div.hw
 		},
 		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
+		.flags = CLK_GET_RATE_NOCACHE | CLK_IGNORE_UNUSED |
+			CLK_SET_RATE_PARENT,
 	},
 };
 
@@ -4497,7 +4613,8 @@ static struct clk_regmap sc2_sd_emmc_b_clk0_sel = {
 		.ops = &clk_regmap_mux_ops,
 		.parent_data = sc2_sd_emmc_clk0_parent_data,
 		.num_parents = ARRAY_SIZE(sc2_sd_emmc_clk0_parent_data),
-		.flags = CLK_SET_RATE_PARENT,
+		.flags = CLK_GET_RATE_NOCACHE | CLK_IGNORE_UNUSED |
+			CLK_SET_RATE_PARENT,
 	},
 };
 
@@ -4514,7 +4631,8 @@ static struct clk_regmap sc2_sd_emmc_b_clk0_div = {
 			&sc2_sd_emmc_b_clk0_sel.hw
 		},
 		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
+		.flags = CLK_GET_RATE_NOCACHE | CLK_IGNORE_UNUSED |
+			CLK_SET_RATE_PARENT,
 	},
 };
 
@@ -4530,7 +4648,8 @@ static struct clk_regmap sc2_sd_emmc_b_clk0 = {
 			&sc2_sd_emmc_b_clk0_div.hw
 		},
 		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
+		.flags = CLK_GET_RATE_NOCACHE | CLK_IGNORE_UNUSED |
+			CLK_SET_RATE_PARENT,
 	},
 };
 
@@ -5111,7 +5230,7 @@ static struct clk_regmap sc2_pwm_j_div = {
 		.name = "pwm_j_div",
 		.ops = &clk_regmap_divider_ops,
 		.parent_hws = (const struct clk_hw *[]) {
-			&sc2_pwm_h_mux.hw
+			&sc2_pwm_j_mux.hw
 		},
 		.num_parents = 1,
 		.flags = CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED,
@@ -6162,7 +6281,6 @@ static const struct of_device_id clkc_match_table[] = {
 	},
 	{}
 };
-MODULE_DEVICE_TABLE(of, clkc_match_table);
 
 static struct platform_driver sc2_driver = {
 	.probe		= meson_sc2_probe,
@@ -6172,5 +6290,21 @@ static struct platform_driver sc2_driver = {
 	},
 };
 
-module_platform_driver(sc2_driver);
+#ifndef CONFIG_AMLOGIC_MODIFY
+builtin_platform_driver(sc2_driver);
+#else
+#ifndef MODULE
+static int sc2_clkc_init(void)
+{
+	return platform_driver_register(&sc2_driver);
+}
+arch_initcall_sync(sc2_clkc_init);
+#else
+int __init meson_sc2_clkc_init(void)
+{
+	return platform_driver_register(&sc2_driver);
+}
+#endif
+#endif
+
 MODULE_LICENSE("GPL v2");

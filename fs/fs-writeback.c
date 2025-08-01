@@ -700,7 +700,7 @@ void wbc_detach_inode(struct writeback_control *wbc)
 		 * is okay.  The main goal is avoiding keeping an inode on
 		 * the wrong wb for an extended period of time.
 		 */
-		if (hweight16(history) > WB_FRN_HIST_THR_SLOTS)
+		if (hweight32(history) > WB_FRN_HIST_THR_SLOTS)
 			inode_switch_wbs(inode, max_id);
 	}
 
@@ -2306,11 +2306,12 @@ void __mark_inode_dirty(struct inode *inode, int flags)
 			bool wakeup_bdi = false;
 
 			wb = locked_inode_to_wb_and_lock_list(inode);
-
+#ifdef CONFIG_AMLOGIC_MODIFY
+#else
 			WARN(bdi_cap_writeback_dirty(wb->bdi) &&
 			     !test_bit(WB_registered, &wb->state),
 			     "bdi-%s not registered\n", wb->bdi->name);
-
+#endif
 			inode->dirtied_when = jiffies;
 			if (dirtytime)
 				inode->dirtied_time_when = jiffies;

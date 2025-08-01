@@ -1988,7 +1988,7 @@ static const struct clk_hw *meson8b_vpu_0_1_parent_hws[] = {
 	&meson8b_fclk_div7.hw,
 };
 
-static const struct clk_hw *mmeson8m2_vpu_0_1_parent_hws[] = {
+static const struct clk_hw *meson8m2_vpu_0_1_parent_hws[] = {
 	&meson8b_fclk_div4.hw,
 	&meson8b_fclk_div3.hw,
 	&meson8b_fclk_div5.hw,
@@ -2019,8 +2019,8 @@ static struct clk_regmap meson8m2_vpu_0_sel = {
 	.hw.init = &(struct clk_init_data){
 		.name = "vpu_0_sel",
 		.ops = &clk_regmap_mux_ops,
-		.parent_hws = mmeson8m2_vpu_0_1_parent_hws,
-		.num_parents = ARRAY_SIZE(mmeson8m2_vpu_0_1_parent_hws),
+		.parent_hws = meson8m2_vpu_0_1_parent_hws,
+		.num_parents = ARRAY_SIZE(meson8m2_vpu_0_1_parent_hws),
 		.flags = CLK_SET_RATE_PARENT,
 	},
 };
@@ -2090,8 +2090,8 @@ static struct clk_regmap meson8m2_vpu_1_sel = {
 	.hw.init = &(struct clk_init_data){
 		.name = "vpu_1_sel",
 		.ops = &clk_regmap_mux_ops,
-		.parent_hws = mmeson8m2_vpu_0_1_parent_hws,
-		.num_parents = ARRAY_SIZE(mmeson8m2_vpu_0_1_parent_hws),
+		.parent_hws = meson8m2_vpu_0_1_parent_hws,
+		.num_parents = ARRAY_SIZE(meson8m2_vpu_0_1_parent_hws),
 		.flags = CLK_SET_RATE_PARENT,
 	},
 };
@@ -3684,16 +3684,13 @@ static void __init meson8b_clkc_init_common(struct device_node *np,
 			struct clk_hw_onecell_data *clk_hw_onecell_data)
 {
 	struct meson8b_clk_reset *rstc;
-	struct device_node *parent_np;
 	const char *notifier_clk_name;
 	struct clk *notifier_clk;
 	void __iomem *clk_base;
 	struct regmap *map;
 	int i, ret;
 
-	parent_np = of_get_parent(np);
-	map = syscon_node_to_regmap(parent_np);
-	of_node_put(parent_np);
+	map = syscon_node_to_regmap(of_get_parent(np));
 	if (IS_ERR(map)) {
 		pr_info("failed to get HHI regmap - Trying obsolete regs\n");
 

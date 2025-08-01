@@ -60,7 +60,7 @@ static int tc58cxgxsx_ecc_get_status(struct spinand_device *spinand,
 {
 	struct nand_device *nand = spinand_to_nand(spinand);
 	u8 mbf = 0;
-	struct spi_mem_op op = SPINAND_GET_FEATURE_OP(0x30, spinand->scratchbuf);
+	struct spi_mem_op op = SPINAND_GET_FEATURE_OP(0x30, &mbf);
 
 	switch (status & STATUS_ECC_MASK) {
 	case STATUS_ECC_NO_BITFLIPS:
@@ -79,7 +79,7 @@ static int tc58cxgxsx_ecc_get_status(struct spinand_device *spinand,
 		if (spi_mem_exec_op(spinand->spimem, &op))
 			return nand->eccreq.strength;
 
-		mbf = *(spinand->scratchbuf) >> 4;
+		mbf >>= 4;
 
 		if (WARN_ON(mbf > nand->eccreq.strength || !mbf))
 			return nand->eccreq.strength;
@@ -162,15 +162,15 @@ static int toshiba_spinand_detect(struct spinand_device *spinand)
 	int ret;
 
 	/*
-	 * Toshiba SPI NAND read ID needs a dummy byte,
-	 * so the first byte in id is garbage.
+	 * TOSHIBA SPI NAND read ID needs a dummy byte, now add dummy to
+	 * the operation of read id, So the 0th byte is the vendor ID.
 	 */
-	if (id[1] != SPINAND_MFR_TOSHIBA)
+	if (id[0] != SPINAND_MFR_TOSHIBA)
 		return 0;
 
 	ret = spinand_match_and_init(spinand, toshiba_spinand_table,
 				     ARRAY_SIZE(toshiba_spinand_table),
-				     id[2]);
+				     id[1]);
 	if (ret)
 		return ret;
 

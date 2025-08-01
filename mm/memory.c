@@ -72,6 +72,8 @@
 #include <linux/oom.h>
 #include <linux/numa.h>
 
+#include <trace/events/kmem.h>
+
 #include <asm/io.h>
 #include <asm/mmu_context.h>
 #include <asm/pgalloc.h>
@@ -152,6 +154,23 @@ static int __init init_zero_pfn(void)
 }
 early_initcall(init_zero_pfn);
 
+/*
+ * Only trace rss_stat when there is a 512kb cross over.
+ * Smaller changes may be lost unless every small change is
+ * crossing into or returning to a 512kb boundary.
+ */
+#define TRACE_MM_COUNTER_THRESHOLD 128
+
+void mm_trace_rss_stat(struct mm_struct *mm, int member, long count,
+		       long value)
+{
+	long thresh_mask = ~(TRACE_MM_COUNTER_THRESHOLD - 1);
+
+	/* Threshold roll-over, trace it */
+	if ((count & thresh_mask) != ((count - value) & thresh_mask))
+		trace_rss_stat(mm, member, count);
+}
+EXPORT_SYMBOL_GPL(mm_trace_rss_stat);
 
 #if defined(SPLIT_RSS_COUNTING)
 
@@ -1917,17 +1936,27 @@ static inline int remap_p4d_range(struct mm_struct *mm, pgd_t *pgd,
 	return 0;
 }
 
-static int remap_pfn_range_internal(struct vm_area_struct *vma, unsigned long addr,
-		unsigned long pfn, unsigned long size, pgprot_t prot)
+/**
+ * remap_pfn_range - remap kernel memory to userspace
+ * @vma: user vma to map to
+ * @addr: target user address to start at
+ * @pfn: physical address of kernel memory
+ * @size: size of map area
+ * @prot: page protection flags for this mapping
+ *
+ * Note: this is only safe if the mm semaphore is held when called.
+ *
+ * Return: %0 on success, negative error code otherwise.
+ */
+int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
+		    unsigned long pfn, unsigned long size, pgprot_t prot)
 {
 	pgd_t *pgd;
 	unsigned long next;
 	unsigned long end = addr + PAGE_ALIGN(size);
 	struct mm_struct *mm = vma->vm_mm;
+	unsigned long remap_pfn = pfn;
 	int err;
-
-	if (WARN_ON_ONCE(!PAGE_ALIGNED(addr)))
-		return -EINVAL;
 
 	/*
 	 * Physically remapped pages are special. Tell the
@@ -1953,6 +1982,10 @@ static int remap_pfn_range_internal(struct vm_area_struct *vma, unsigned long ad
 		vma->vm_pgoff = pfn;
 	}
 
+	err = track_pfn_remap(vma, &prot, remap_pfn, addr, PAGE_ALIGN(size));
+	if (err)
+		return -EINVAL;
+
 	vma->vm_flags |= VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP;
 
 	BUG_ON(addr >= end);
@@ -1964,57 +1997,12 @@ static int remap_pfn_range_internal(struct vm_area_struct *vma, unsigned long ad
 		err = remap_p4d_range(mm, pgd, addr, next,
 				pfn + (addr >> PAGE_SHIFT), prot);
 		if (err)
-			return err;
+			break;
 	} while (pgd++, addr = next, addr != end);
 
-	return 0;
-}
-
-/*
- * Variant of remap_pfn_range that does not call track_pfn_remap.  The caller
- * must have pre-validated the caching bits of the pgprot_t.
- */
-int remap_pfn_range_notrack(struct vm_area_struct *vma, unsigned long addr,
-		unsigned long pfn, unsigned long size, pgprot_t prot)
-{
-	int error = remap_pfn_range_internal(vma, addr, pfn, size, prot);
-
-	if (!error)
-		return 0;
-
-	/*
-	 * A partial pfn range mapping is dangerous: it does not
-	 * maintain page reference counts, and callers may free
-	 * pages due to the error. So zap it early.
-	 */
-	zap_page_range_single(vma, addr, size, NULL);
-	return error;
-}
-
-/**
- * remap_pfn_range - remap kernel memory to userspace
- * @vma: user vma to map to
- * @addr: target page aligned user address to start at
- * @pfn: page frame number of kernel physical memory address
- * @size: size of mapping area
- * @prot: page protection flags for this mapping
- *
- * Note: this is only safe if the mm semaphore is held when called.
- *
- * Return: %0 on success, negative error code otherwise.
- */
-int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
-		    unsigned long pfn, unsigned long size, pgprot_t prot)
-{
-	int err;
-
-	err = track_pfn_remap(vma, &prot, pfn, addr, PAGE_ALIGN(size));
 	if (err)
-		return -EINVAL;
+		untrack_pfn(vma, remap_pfn, PAGE_ALIGN(size));
 
-	err = remap_pfn_range_notrack(vma, addr, pfn, size, prot);
-	if (err)
-		untrack_pfn(vma, pfn, PAGE_ALIGN(size));
 	return err;
 }
 EXPORT_SYMBOL(remap_pfn_range);
@@ -2469,13 +2457,25 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 		goto oom;
 
 	if (is_zero_pfn(pte_pfn(vmf->orig_pte))) {
+	#ifdef CONFIG_AMLOGIC_CMA
+		gfp_t tmp_flag = __GFP_MOVABLE | __GFP_NO_CMA;
+
+		new_page = __alloc_zeroed_user_highpage(tmp_flag, vma,
+							vmf->address);
+	#else
 		new_page = alloc_zeroed_user_highpage_movable(vma,
 							      vmf->address);
+	#endif
 		if (!new_page)
 			goto oom;
 	} else {
+	#ifdef CONFIG_AMLOGIC_CMA
+		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE | __GFP_NO_CMA,
+					  vma, vmf->address);
+	#else
 		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
 				vmf->address);
+	#endif
 		if (!new_page)
 			goto oom;
 
@@ -2713,6 +2713,14 @@ static vm_fault_t do_wp_page(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
 
+	/*
+	 * Userfaultfd write-protect can defer flushes. Ensure the TLB
+	 * is flushed in this case before copying.
+	 */
+	if (unlikely(userfaultfd_wp(vmf->vma) &&
+		     mm_tlb_flush_pending(vmf->vma->vm_mm)))
+		flush_tlb_page(vmf->vma, vmf->address);
+
 	vmf->page = vm_normal_page(vma, vmf->address, vmf->orig_pte);
 	if (!vmf->page) {
 		/*
@@ -2735,49 +2743,25 @@ static vm_fault_t do_wp_page(struct vm_fault *vmf)
 	 * not dirty accountable.
 	 */
 	if (PageAnon(vmf->page)) {
-		int total_map_swapcount;
-		if (PageKsm(vmf->page) && (PageSwapCache(vmf->page) ||
-					   page_count(vmf->page) != 1))
+		struct page *page = vmf->page;
+
+		/* PageKsm() doesn't necessarily raise the page refcount */
+		if (PageKsm(page) || page_count(page) != 1)
 			goto copy;
-		if (!trylock_page(vmf->page)) {
-			get_page(vmf->page);
-			pte_unmap_unlock(vmf->pte, vmf->ptl);
-			lock_page(vmf->page);
-			vmf->pte = pte_offset_map_lock(vma->vm_mm, vmf->pmd,
-					vmf->address, &vmf->ptl);
-			if (!pte_same(*vmf->pte, vmf->orig_pte)) {
-				unlock_page(vmf->page);
-				pte_unmap_unlock(vmf->pte, vmf->ptl);
-				put_page(vmf->page);
-				return 0;
-			}
-			put_page(vmf->page);
+		if (!trylock_page(page))
+			goto copy;
+		if (PageKsm(page) || page_mapcount(page) != 1 || page_count(page) != 1) {
+			unlock_page(page);
+			goto copy;
 		}
-		if (PageKsm(vmf->page)) {
-			bool reused = reuse_ksm_page(vmf->page, vmf->vma,
-						     vmf->address);
-			unlock_page(vmf->page);
-			if (!reused)
-				goto copy;
-			wp_page_reuse(vmf);
-			return VM_FAULT_WRITE;
-		}
-		if (reuse_swap_page(vmf->page, &total_map_swapcount)) {
-			if (total_map_swapcount == 1) {
-				/*
-				 * The page is all ours. Move it to
-				 * our anon_vma so the rmap code will
-				 * not search our parent or siblings.
-				 * Protected against the rmap code by
-				 * the page lock.
-				 */
-				page_move_anon_rmap(vmf->page, vma);
-			}
-			unlock_page(vmf->page);
-			wp_page_reuse(vmf);
-			return VM_FAULT_WRITE;
-		}
-		unlock_page(vmf->page);
+		/*
+		 * Ok, we've got the only map reference, and the only
+		 * page count reference, and the page is locked,
+		 * it's dark out, and we're wearing sunglasses. Hit it.
+		 */
+		unlock_page(page);
+		wp_page_reuse(vmf);
+		return VM_FAULT_WRITE;
 	} else if (unlikely((vma->vm_flags & (VM_WRITE|VM_SHARED)) ==
 					(VM_WRITE|VM_SHARED))) {
 		return wp_page_shared(vmf);
@@ -2903,8 +2887,8 @@ void unmap_mapping_pages(struct address_space *mapping, pgoff_t start,
 void unmap_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen, int even_cows)
 {
-	pgoff_t hba = (pgoff_t)(holebegin) >> PAGE_SHIFT;
-	pgoff_t hlen = ((pgoff_t)(holelen) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	pgoff_t hba = holebegin >> PAGE_SHIFT;
+	pgoff_t hlen = (holelen + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
 	/* Check for overflow. */
 	if (sizeof(holelen) > sizeof(hlen)) {
@@ -2974,7 +2958,9 @@ vm_fault_t do_swap_page(struct vm_fault *vmf)
 				__SetPageLocked(page);
 				__SetPageSwapBacked(page);
 				set_page_private(page, entry.val);
-				lru_cache_add_anon(page);
+
+				lru_cache_add(page);
+
 				swap_readpage(page, true);
 			}
 		} else {
@@ -3394,13 +3380,14 @@ static vm_fault_t do_set_pmd(struct vm_fault *vmf, struct page *page)
 	unsigned long haddr = vmf->address & HPAGE_PMD_MASK;
 	pmd_t entry;
 	int i;
-	vm_fault_t ret;
+	vm_fault_t ret = VM_FAULT_FALLBACK;
 
 	if (!transhuge_vma_suitable(vma, haddr))
-		return VM_FAULT_FALLBACK;
+		return ret;
 
-	ret = VM_FAULT_FALLBACK;
-	page = compound_head(page);
+        page = compound_head(page);
+        if (compound_order(page) != HPAGE_PMD_ORDER)
+                return ret;
 
 	/*
 	 * Archs like ppc64 need additonal space to store information
@@ -3684,9 +3671,11 @@ static vm_fault_t do_read_fault(struct vm_fault *vmf)
 	 * something).
 	 */
 	if (vma->vm_ops->map_pages && fault_around_bytes >> PAGE_SHIFT > 1) {
-		ret = do_fault_around(vmf);
-		if (ret)
-			return ret;
+		if (likely(!userfaultfd_minor(vmf->vma))) {
+			ret = do_fault_around(vmf);
+			if (ret)
+				return ret;
+		}
 	}
 
 	ret = __do_fault(vmf);
@@ -4087,6 +4076,48 @@ unlock:
 	return 0;
 }
 
+#ifdef CONFIG_AMLOGIC_PIN_LOCKED_FILE
+static bool __restore_locked_page(struct page *page, struct vm_area_struct *vma,
+			 unsigned long addr, void *arg)
+{
+	int ret;
+	pte_t old_pte, *pte;
+	spinlock_t *ptl;	/* pte lock */
+
+	if (vma->vm_flags & (VM_LOCKED | VM_LOCKONFAULT)) {
+		if (addr < vma->vm_start || addr >= vma->vm_end)
+			return -EFAULT;
+		if (!page_count(page))
+			return -EINVAL;
+
+		pte = get_locked_pte(vma->vm_mm, addr, &ptl);
+		if (!pte)
+			return true;
+		old_pte = *pte;
+		pte_unmap_unlock(pte, ptl);
+		/* already refaulted */
+		if (pte_valid(old_pte) && pte_pfn(old_pte) == page_to_pfn(page))
+			return true;
+
+		ret = insert_page(vma, addr, page, vma->vm_page_prot);
+		pr_debug("%s, restore page:%lx for addr:%lx, vma:%px, ret:%d, old_pte:%llx\n",
+			__func__,  page_to_pfn(page), addr, vma, ret,
+			(unsigned long long)pte_val(old_pte));
+		return ret ? false : true;
+	}
+	return true; /* keep loop */
+}
+
+void restore_locked_page(struct page *page)
+{
+	struct rmap_walk_control rwc = {
+		.rmap_one = __restore_locked_page,
+	};
+
+	rmap_walk(page, &rwc);
+}
+#endif
+
 /*
  * By the time we get here, we already hold the mm semaphore
  *
@@ -4102,7 +4133,13 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		.flags = flags,
 		.pgoff = linear_page_index(vma, address),
 		.gfp_mask = __get_fault_gfp_mask(vma),
+	#ifdef CONFIG_AMLOGIC_PIN_LOCKED_FILE
+		.pte  = NULL,
+	#endif
 	};
+#ifdef CONFIG_AMLOGIC_PIN_LOCKED_FILE
+	struct address_space *mapping = NULL;
+#endif
 	unsigned int dirty = flags & FAULT_FLAG_WRITE;
 	struct mm_struct *mm = vma->vm_mm;
 	pgd_t *pgd;
@@ -4173,7 +4210,51 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		}
 	}
 
+#ifdef CONFIG_AMLOGIC_CMA
+	if (vma->vm_file && vma->vm_file->f_mapping &&
+		(vma->vm_flags & VM_EXEC))
+		vma->vm_file->f_mapping->gfp_mask |= __GFP_NO_CMA;
+#endif
+
+#ifdef CONFIG_AMLOGIC_PIN_LOCKED_FILE
+	ret = handle_pte_fault(&vmf);
+	/* Android lock it but not access it */
+	if (vma->vm_file && !(vma->vm_flags & VM_LOCKED))
+		mapping = vma->vm_file->f_mapping;
+	if (mapping && test_bit(AS_LOCK_MAPPING, &mapping->flags) && !ret) {
+		struct page *page;
+		spinlock_t *ptl; /* page table lock */
+		pte_t *ptep, pte;
+		int need_restore = 0;
+
+		ptep = pte_offset_map_lock(mm, vmf.pmd, address, &ptl);
+		pte  = *ptep;
+		page = vm_normal_page(vmf.vma, address, pte);
+		if (page && !PageMlocked(page)) {
+			if (page->mapping && trylock_page(page)) {
+				pr_debug("fault on locked, new pte:%llx, addr:%lx, page:%lx, %lx, ret:%x, mapping:%px f:%lx\n",
+					(unsigned long long)pte_val(pte),
+					address, page_to_pfn(page),
+					page->flags, ret,
+					mapping, mapping->flags);
+				lru_add_drain();  /* push cached pages to LRU */
+				mlock_vma_page(page);
+				/* Set this flag to avoid shrink again */
+			#ifndef CONFIG_KASAN
+				SetPageCmaAllocating(page);
+			#endif
+				unlock_page(page);
+				need_restore = 1;
+			}
+		}
+		pte_unmap_unlock(ptep, ptl);
+		if (need_restore)
+			restore_locked_page(page);
+	}
+	return ret;
+#else
 	return handle_pte_fault(&vmf);
+#endif
 }
 
 /*
@@ -4458,10 +4539,6 @@ int follow_phys(struct vm_area_struct *vma,
 	if (follow_pte(vma->vm_mm, address, &ptep, &ptl))
 		goto out;
 	pte = *ptep;
-
-	/* Never return PFNs of anon folios in COW mappings. */
-	if (vm_normal_page(vma, address, pte))
-		goto unlock;
 
 	if ((flags & FOLL_WRITE) && !pte_write(pte))
 		goto unlock;

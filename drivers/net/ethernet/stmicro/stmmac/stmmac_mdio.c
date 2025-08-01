@@ -358,19 +358,10 @@ int stmmac_mdio_register(struct net_device *ndev)
 	new_bus->parent = priv->device;
 
 	err = of_mdiobus_register(new_bus, mdio_node);
-	if (err == -ENODEV) {
-		err = 0;
-		dev_info(dev, "MDIO bus is disabled\n");
-		goto bus_register_fail;
-	} else if (err) {
-		dev_err_probe(dev, err, "Cannot register the MDIO bus\n");
+	if (err != 0) {
+		dev_err(dev, "Cannot register the MDIO bus\n");
 		goto bus_register_fail;
 	}
-
-		stmmac_mdio_write(new_bus,0,31,2627);
-		stmmac_mdio_write(new_bus,0,25,0x1801);
-		stmmac_mdio_write(new_bus,0,31,0);
-		stmmac_mdio_write(new_bus,0,0,0x8000);
 
 	if (priv->plat->phy_node || mdio_node)
 		goto bus_register_done;

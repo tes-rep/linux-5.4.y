@@ -165,6 +165,10 @@ unsigned int __do_page_cache_readahead(struct address_space *mapping,
 	loff_t isize = i_size_read(inode);
 	gfp_t gfp_mask = readahead_gfp_mask(mapping);
 
+#ifdef CONFIG_AMLOGIC_CMA
+	if (filp->f_mode & (FMODE_WRITE | FMODE_WRITE_IOCTL))
+		gfp_mask |= __GFP_WRITE;
+#endif /* CONFIG_AMLOGIC_CMA */
 	if (isize == 0)
 		goto out;
 
@@ -592,8 +596,7 @@ ssize_t ksys_readahead(int fd, loff_t offset, size_t count)
 	 */
 	ret = -EINVAL;
 	if (!f.file->f_mapping || !f.file->f_mapping->a_ops ||
-	    (!S_ISREG(file_inode(f.file)->i_mode) &&
-	    !S_ISBLK(file_inode(f.file)->i_mode)))
+	    !S_ISREG(file_inode(f.file)->i_mode))
 		goto out;
 
 	ret = vfs_fadvise(f.file, offset, count, POSIX_FADV_WILLNEED);

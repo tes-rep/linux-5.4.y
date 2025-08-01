@@ -171,7 +171,6 @@ static int can_create(struct net *net, struct socket *sock, int protocol,
 		/* release sk on errors */
 		sock_orphan(sk);
 		sock_put(sk);
-		sock->sk = NULL;
 	}
 
  errout:
@@ -288,8 +287,8 @@ int can_send(struct sk_buff *skb, int loop)
 		netif_rx_ni(newskb);
 
 	/* update statistics */
-	atomic_long_inc(&pkg_stats->tx_frames);
-	atomic_long_inc(&pkg_stats->tx_frames_delta);
+	pkg_stats->tx_frames++;
+	pkg_stats->tx_frames_delta++;
 
 	return 0;
 
@@ -451,7 +450,7 @@ int can_rx_register(struct net *net, struct net_device *dev, canid_t can_id,
 
 	/* insert new receiver  (dev,canid,mask) -> (func,data) */
 
-	if (dev && (dev->type != ARPHRD_CAN || !can_get_ml_priv(dev)))
+	if (dev && dev->type != ARPHRD_CAN)
 		return -ENODEV;
 
 	if (dev && !net_eq(net, dev_net(dev)))
@@ -647,8 +646,8 @@ static void can_receive(struct sk_buff *skb, struct net_device *dev)
 	int matches;
 
 	/* update statistics */
-	atomic_long_inc(&pkg_stats->rx_frames);
-	atomic_long_inc(&pkg_stats->rx_frames_delta);
+	pkg_stats->rx_frames++;
+	pkg_stats->rx_frames_delta++;
 
 	/* create non-zero unique skb identifier together with *skb */
 	while (!(can_skb_prv(skb)->skbcnt))
@@ -669,8 +668,8 @@ static void can_receive(struct sk_buff *skb, struct net_device *dev)
 	consume_skb(skb);
 
 	if (matches > 0) {
-		atomic_long_inc(&pkg_stats->matches);
-		atomic_long_inc(&pkg_stats->matches_delta);
+		pkg_stats->matches++;
+		pkg_stats->matches_delta++;
 	}
 }
 
@@ -679,7 +678,7 @@ static int can_rcv(struct sk_buff *skb, struct net_device *dev,
 {
 	struct canfd_frame *cfd = (struct canfd_frame *)skb->data;
 
-	if (unlikely(dev->type != ARPHRD_CAN || !can_get_ml_priv(dev) || skb->len != CAN_MTU)) {
+	if (unlikely(dev->type != ARPHRD_CAN || skb->len != CAN_MTU)) {
 		pr_warn_once("PF_CAN: dropped non conform CAN skbuff: dev type %d, len %d\n",
 			     dev->type, skb->len);
 		goto free_skb;
@@ -705,7 +704,7 @@ static int canfd_rcv(struct sk_buff *skb, struct net_device *dev,
 {
 	struct canfd_frame *cfd = (struct canfd_frame *)skb->data;
 
-	if (unlikely(dev->type != ARPHRD_CAN || !can_get_ml_priv(dev) || skb->len != CANFD_MTU)) {
+	if (unlikely(dev->type != ARPHRD_CAN || skb->len != CANFD_MTU)) {
 		pr_warn_once("PF_CAN: dropped non conform CAN FD skbuff: dev type %d, len %d\n",
 			     dev->type, skb->len);
 		goto free_skb;

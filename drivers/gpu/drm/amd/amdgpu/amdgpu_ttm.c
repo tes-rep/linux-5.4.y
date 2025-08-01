@@ -1275,7 +1275,7 @@ static int amdgpu_ttm_tt_populate(struct ttm_tt *ttm,
 	}
 
 #ifdef CONFIG_SWIOTLB
-	if (adev->need_swiotlb && swiotlb_nr_tbl()) {
+	if (adev->need_swiotlb && is_swiotlb_active(adev->dev)) {
 		return ttm_dma_populate(&gtt->ttm, adev->dev, ctx);
 	}
 #endif
@@ -1311,7 +1311,7 @@ static void amdgpu_ttm_tt_unpopulate(struct ttm_tt *ttm)
 	adev = amdgpu_ttm_adev(ttm->bdev);
 
 #ifdef CONFIG_SWIOTLB
-	if (adev->need_swiotlb && swiotlb_nr_tbl()) {
+	if (adev->need_swiotlb && is_swiotlb_active(adev->dev)) {
 		ttm_dma_unpopulate(&gtt->ttm, adev->dev);
 		return;
 	}
@@ -1678,7 +1678,6 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 
 	mutex_init(&adev->mman.gtt_window_lock);
 
-	dma_set_max_seg_size(adev->dev, UINT_MAX);
 	/* No others user of address space so set it to 0 */
 	r = ttm_bo_device_init(&adev->mman.bdev,
 			       &amdgpu_bo_driver,
@@ -2457,7 +2456,7 @@ static int amdgpu_ttm_debugfs_init(struct amdgpu_device *adev)
 	count = ARRAY_SIZE(amdgpu_ttm_debugfs_list);
 
 #ifdef CONFIG_SWIOTLB
-	if (!(adev->need_swiotlb && swiotlb_nr_tbl()))
+	if (!(adev->need_swiotlb && is_swiotlb_active(adev->dev)))
 		--count;
 #endif
 

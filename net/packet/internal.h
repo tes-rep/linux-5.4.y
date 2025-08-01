@@ -115,9 +115,10 @@ struct packet_sock {
 	int			copy_thresh;
 	spinlock_t		bind_lock;
 	struct mutex		pg_vec_lock;
-	unsigned long		flags;
 	unsigned int		running;	/* bind_lock must be held */
-	unsigned int		has_vnet_hdr:1, /* writer must hold sock lock */
+	unsigned int		auxdata:1,	/* writer must hold sock lock */
+				origdev:1,
+				has_vnet_hdr:1,
 				tp_loss:1,
 				tp_tx_has_off:1;
 	int			pressure;
@@ -125,7 +126,7 @@ struct packet_sock {
 	__be16			num;
 	struct packet_rollover	*rollover;
 	struct packet_mclist	*mclist;
-	atomic_long_t		mapped;
+	atomic_t		mapped;
 	enum tpacket_versions	tp_version;
 	unsigned int		tp_hdrlen;
 	unsigned int		tp_reserve;
@@ -135,33 +136,11 @@ struct packet_sock {
 	int			(*xmit)(struct sk_buff *skb);
 	struct packet_type	prot_hook ____cacheline_aligned_in_smp;
 	atomic_t		tp_drops ____cacheline_aligned_in_smp;
-	unsigned int		pkt_type;
 };
 
 static struct packet_sock *pkt_sk(struct sock *sk)
 {
 	return (struct packet_sock *)sk;
-}
-
-enum packet_sock_flags {
-	PACKET_SOCK_ORIGDEV,
-	PACKET_SOCK_AUXDATA,
-};
-
-static inline void packet_sock_flag_set(struct packet_sock *po,
-					enum packet_sock_flags flag,
-					bool val)
-{
-	if (val)
-		set_bit(flag, &po->flags);
-	else
-		clear_bit(flag, &po->flags);
-}
-
-static inline bool packet_sock_flag(const struct packet_sock *po,
-				    enum packet_sock_flags flag)
-{
-	return test_bit(flag, &po->flags);
 }
 
 #endif

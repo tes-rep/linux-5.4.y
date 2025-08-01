@@ -255,6 +255,10 @@ static int mmc_spi_response_get(struct mmc_spi_host *host,
 	u8 	leftover = 0;
 	unsigned short rotator;
 	int 	i;
+	char	tag[32];
+
+	snprintf(tag, sizeof(tag), "  ... CMD%d response SPI_%s",
+		cmd->opcode, maptype(cmd));
 
 	/* Except for data block reads, the whole response will already
 	 * be stored in the scratch buffer.  It's somewhere after the
@@ -404,9 +408,8 @@ checkstatus:
 	}
 
 	if (value < 0)
-		dev_dbg(&host->spi->dev,
-			"  ... CMD%d response SPI_%s: resp %04x %08x\n",
-			cmd->opcode, maptype(cmd), cmd->resp[0], cmd->resp[1]);
+		dev_dbg(&host->spi->dev, "%s: resp %04x %08x\n",
+			tag, cmd->resp[0], cmd->resp[1]);
 
 	/* disable chipselect on errors and some success cases */
 	if (value >= 0 && cs_on)
@@ -1417,7 +1420,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 
 	status = mmc_add_host(mmc);
 	if (status != 0)
-		goto fail_glue_init;
+		goto fail_add_host;
 
 	/*
 	 * Index 0 is card detect
@@ -1425,7 +1428,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 	 */
 	status = mmc_gpiod_request_cd(mmc, NULL, 0, false, 1, NULL);
 	if (status == -EPROBE_DEFER)
-		goto fail_gpiod_request;
+		goto fail_add_host;
 	if (!status) {
 		/*
 		 * The platform has a CD GPIO signal that may support
@@ -1440,7 +1443,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 	/* Index 1 is write protect/read only */
 	status = mmc_gpiod_request_ro(mmc, NULL, 1, 0, NULL);
 	if (status == -EPROBE_DEFER)
-		goto fail_gpiod_request;
+		goto fail_add_host;
 	if (!status)
 		has_ro = true;
 
@@ -1454,7 +1457,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 				? ", cd polling" : "");
 	return 0;
 
-fail_gpiod_request:
+fail_add_host:
 	mmc_remove_host(mmc);
 fail_glue_init:
 	if (host->dma_dev)

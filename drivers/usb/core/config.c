@@ -12,7 +12,9 @@
 #include <linux/device.h>
 #include <asm/byteorder.h>
 #include "usb.h"
-
+#ifdef CONFIG_AMLOGIC_USB
+#include "../host/xhci.h"
+#endif
 
 #define USB_MAXALTSETTING		128	/* Hard limit */
 
@@ -251,12 +253,50 @@ static bool config_endpoint_is_duplicate(struct usb_host_config *config,
 	return false;
 }
 
+#ifdef CONFIG_AMLOGIC_USB
+void stop_ep_cmd_work(struct work_struct *work)
+{
+	struct xhci_hcd *xhci;
+	struct xhci_ep_ctx *ep_ctx;
+	struct usb_device *udev;
+	u32 i;
+	struct usb_host_endpoint *endpoint =
+		container_of(work, struct usb_host_endpoint, work);
+
+	int ep_index = xhci_get_endpoint_index(&endpoint->desc);
+
+	while (1) {
+		if (endpoint->xhci && endpoint->udev) {
+			u16 stat;
+
+			xhci = endpoint->xhci;
+			udev = endpoint->udev;
+			ep_ctx = xhci_get_ep_ctx(xhci,
+			xhci->devs[udev->slot_id]->out_ctx, ep_index);
+			dev_warn(&udev->dev, "%s start ...\n", __func__);
+			for (i = 0; i < 6; i++) {
+				usb_get_std_status(udev, USB_RECIP_ENDPOINT,
+					endpoint->desc.bEndpointAddress, &stat);
+				usleep_range(500, 501);
+			}
+			break;
+		}
+	}
+	dev_warn(&udev->dev, "%s done\n", __func__);
+}
+
+#endif
+
 static int usb_parse_endpoint(struct device *ddev, int cfgno,
 		struct usb_host_config *config, int inum, int asnum,
 		struct usb_host_interface *ifp, int num_ep,
 		unsigned char *buffer, int size)
 {
 	struct usb_device *udev = to_usb_device(ddev);
+#ifdef CONFIG_AMLOGIC_USB
+	struct usb_hcd		*hcd = bus_to_hcd(udev->bus);
+	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
+#endif
 	unsigned char *buffer0 = buffer;
 	struct usb_endpoint_descriptor *d;
 	struct usb_host_endpoint *endpoint;
@@ -291,20 +331,6 @@ static int usb_parse_endpoint(struct device *ddev, int cfgno,
 	if (ifp->desc.bNumEndpoints >= num_ep)
 		goto skip_to_next_endpoint_or_interface_descriptor;
 
-	/* Save a copy of the descriptor and use it instead of the original */
-	endpoint = &ifp->endpoint[ifp->desc.bNumEndpoints];
-	memcpy(&endpoint->desc, d, n);
-	d = &endpoint->desc;
-
-	/* Clear the reserved bits in bEndpointAddress */
-	i = d->bEndpointAddress &
-			(USB_ENDPOINT_DIR_MASK | USB_ENDPOINT_NUMBER_MASK);
-	if (i != d->bEndpointAddress) {
-		dev_notice(ddev, "config %d interface %d altsetting %d has an endpoint descriptor with address 0x%X, changing to 0x%X\n",
-		    cfgno, inum, asnum, d->bEndpointAddress, i);
-		endpoint->desc.bEndpointAddress = i;
-	}
-
 	/* Check for duplicate endpoint addresses */
 	if (config_endpoint_is_duplicate(config, inum, asnum, d)) {
 		dev_warn(ddev, "config %d interface %d altsetting %d has a duplicate endpoint with address 0x%X, skipping\n",
@@ -322,9 +348,31 @@ static int usb_parse_endpoint(struct device *ddev, int cfgno,
 		}
 	}
 
-	/* Accept this endpoint */
+	endpoint = &ifp->endpoint[ifp->desc.bNumEndpoints];
 	++ifp->desc.bNumEndpoints;
+
+#ifdef CONFIG_AMLOGIC_USB
+	if (bt_intep_is_blacklist(udev) && (usb_endpoint_xfer_int(d)) &&
+		bt_epaddr_is_blacklist(d)) {
+		d->bInterval = 0;
+		d->bmAttributes = 0x2;
+		d->wMaxPacketSize = 512;
+		dev_warn(ddev, "change	int ep(%x) => bulk ep\n", d->bEndpointAddress);
+	}
+#endif
+	memcpy(&endpoint->desc, d, n);
 	INIT_LIST_HEAD(&endpoint->urb_list);
+
+#ifdef CONFIG_AMLOGIC_USB
+	if (xhci->quirks & XHCI_CRG_HOST_011) {
+		if (usb_endpoint_xfer_isoc(d) &&
+			udev->descriptor.bDeviceClass == 0xef &&
+			udev->speed == USB_SPEED_HIGH) {
+			endpoint->xhci = NULL;
+			INIT_WORK(&endpoint->work, stop_ep_cmd_work);
+		}
+	}
+#endif
 
 	/*
 	 * Fix up bInterval values outside the legal range.

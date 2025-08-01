@@ -12,14 +12,13 @@
 #include <linux/kthread.h>
 #include <linux/ktime.h>
 #include <linux/blk-mq.h>
+#include <linux/keyslot-manager.h>
 
 #include <trace/events/block.h>
 
 #include "dm.h"
 
 #define DM_RESERVED_MAX_IOS		1024
-#define DM_MAX_TARGETS			1048576
-#define DM_MAX_TARGET_PARAMS		1024
 
 struct dm_kobject_holder {
 	struct kobject kobj;

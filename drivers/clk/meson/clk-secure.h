@@ -37,10 +37,10 @@
 #define CPU_DIVIDER_SET_RATE 11
 
 extern const struct clk_ops meson_secure_clk_pll_ops; /* for sc2 secure pll*/
-extern const struct clk_ops meson_clk_regmap_secure_divider_ops;
-extern const struct clk_ops meson_clk_regmap_secure_divider_ro_ops;
-extern const struct clk_ops meson_clk_regmap_secure_mux_ops;
-extern const struct clk_ops meson_clk_regmap_secure_mux_ro_ops;
+extern const struct clk_ops clk_regmap_secure_divider_ops;
+extern const struct clk_ops clk_regmap_secure_divider_ro_ops;
+extern const struct clk_ops clk_regmap_secure_mux_ops;
+extern const struct clk_ops clk_regmap_secure_mux_ro_ops;
 extern const struct clk_ops meson_secure_clk_cpu_dyndiv_ops;
 
 #endif /* __CLK_SECURE_H */

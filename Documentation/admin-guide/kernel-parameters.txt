@@ -441,6 +441,12 @@
 			no delay (0).
 			Format: integer
 
+	bootconfig	[KNL]
+			Extended command line options can be added to an initrd
+			and this will cause the kernel to look for it.
+
+			See Documentation/admin-guide/bootconfig.rst
+
 	bootmem_debug	[KNL] Enable bootmem allocator debug messages.
 
 	bert_disable	[ACPI]
@@ -484,16 +490,21 @@
 	ccw_timeout_log	[S390]
 			See Documentation/s390/common_io.rst for details.
 
-	cgroup_disable=	[KNL] Disable a particular controller
-			Format: {name of the controller(s) to disable}
+	cgroup_disable=	[KNL] Disable a particular controller or optional feature
+			Format: {name of the controller(s) or feature(s) to disable}
 			The effects of cgroup_disable=foo are:
 			- foo isn't auto-mounted if you mount all cgroups in
 			  a single hierarchy
 			- foo isn't visible as an individually mountable
 			  subsystem
+			- if foo is an optional feature then the feature is
+			  disabled and corresponding cgroup files are not
+			  created
 			{Currently only "memory" controller deal with this and
 			cut the overhead, others just disable the usage. So
 			only cgroup_disable=memory is actually worthy}
+			Specifying "pressure" disables per-cgroup pressure
+			stall information accounting feature
 
 	cgroup_no_v1=	[KNL] Disable cgroup controllers and named hierarchies in v1
 			Format: { { controller | "all" | "named" }
@@ -824,6 +835,10 @@
 			on: enable the feature
 
 	debugpat	[X86] Enable PAT debugging
+
+	decnet.addr=	[HW,NET]
+			Format: <area>[,<node>]
+			See also Documentation/networking/decnet.txt.
 
 	default_hugepagesz=
 			[same as hugepagesz=] The size of the default
@@ -1335,26 +1350,6 @@
 	gart_fix_e820=	[X86_64] disable the fix e820 for K8 GART
 			Format: off | on
 			default: on
-
-	gather_data_sampling=
-			[X86,INTEL] Control the Gather Data Sampling (GDS)
-			mitigation.
-
-			Gather Data Sampling is a hardware vulnerability which
-			allows unprivileged speculative access to data which was
-			previously stored in vector registers.
-
-			This issue is mitigated by default in updated microcode.
-			The mitigation may have a performance impact but can be
-			disabled. On systems without the microcode mitigation
-			disabling AVX serves as a mitigation.
-
-			force:	Disable AVX to mitigate systems without
-				microcode mitigation. No effect if the microcode
-				mitigation is present. Known to cause crashes in
-				userspace with buggy AVX enumeration.
-
-			off:    Disable GDS mitigation.
 
 	gcov_persist=	[GCOV] When non-zero (default), profiling data for
 			kernel modules is saved and remains accessible via
@@ -1960,57 +1955,24 @@
 
 	ivrs_ioapic	[HW,X86_64]
 			Provide an override to the IOAPIC-ID<->DEVICE-ID
-			mapping provided in the IVRS ACPI table.
-			By default, PCI segment is 0, and can be omitted.
-
-			For example, to map IOAPIC-ID decimal 10 to
-			PCI segment 0x1 and PCI device 00:14.0,
-			write the parameter as:
-				ivrs_ioapic=10@0001:00:14.0
-
-			Deprecated formats:
-			* To map IOAPIC-ID decimal 10 to PCI device 00:14.0
-			  write the parameter as:
+			mapping provided in the IVRS ACPI table. For
+			example, to map IOAPIC-ID decimal 10 to
+			PCI device 00:14.0 write the parameter as:
 				ivrs_ioapic[10]=00:14.0
-			* To map IOAPIC-ID decimal 10 to PCI segment 0x1 and
-			  PCI device 00:14.0 write the parameter as:
-				ivrs_ioapic[10]=0001:00:14.0
 
 	ivrs_hpet	[HW,X86_64]
 			Provide an override to the HPET-ID<->DEVICE-ID
-			mapping provided in the IVRS ACPI table.
-			By default, PCI segment is 0, and can be omitted.
-
-			For example, to map HPET-ID decimal 10 to
-			PCI segment 0x1 and PCI device 00:14.0,
-			write the parameter as:
-				ivrs_hpet=10@0001:00:14.0
-
-			Deprecated formats:
-			* To map HPET-ID decimal 0 to PCI device 00:14.0
-			  write the parameter as:
+			mapping provided in the IVRS ACPI table. For
+			example, to map HPET-ID decimal 0 to
+			PCI device 00:14.0 write the parameter as:
 				ivrs_hpet[0]=00:14.0
-			* To map HPET-ID decimal 10 to PCI segment 0x1 and
-			  PCI device 00:14.0 write the parameter as:
-				ivrs_ioapic[10]=0001:00:14.0
 
 	ivrs_acpihid	[HW,X86_64]
 			Provide an override to the ACPI-HID:UID<->DEVICE-ID
-			mapping provided in the IVRS ACPI table.
-			By default, PCI segment is 0, and can be omitted.
-
-			For example, to map UART-HID:UID AMD0020:0 to
-			PCI segment 0x1 and PCI device ID 00:14.5,
-			write the parameter as:
-				ivrs_acpihid=AMD0020:0@0001:00:14.5
-
-			Deprecated formats:
-			* To map UART-HID:UID AMD0020:0 to PCI segment is 0,
-			  PCI device ID 00:14.5, write the parameter as:
+			mapping provided in the IVRS ACPI table. For
+			example, to map UART-HID:UID AMD0020:0 to
+			PCI device 00:14.5 write the parameter as:
 				ivrs_acpihid[00:14.5]=AMD0020:0
-			* To map UART-HID:UID AMD0020:0 to PCI segment 0x1 and
-			  PCI device ID 00:14.5, write the parameter as:
-				ivrs_acpihid[0001:00:14.5]=AMD0020:0
 
 	js=		[HW,JOY] Analog joystick
 			See Documentation/input/joydev/joystick.rst.
@@ -2716,22 +2678,21 @@
 				Disable all optional CPU mitigations.  This
 				improves system performance, but it may also
 				expose users to several CPU vulnerabilities.
-				Equivalent to: gather_data_sampling=off [X86]
+				Equivalent to: nopti [X86,PPC]
 					       kpti=0 [ARM64]
-					       kvm.nx_huge_pages=off [X86]
+					       nospectre_v1 [X86,PPC]
+					       nobp=0 [S390]
+					       nospectre_v2 [X86,PPC,S390,ARM64]
+					       spectre_v2_user=off [X86]
+					       spec_store_bypass_disable=off [X86,PPC]
+					       ssbd=force-off [ARM64]
 					       l1tf=off [X86]
 					       mds=off [X86]
-					       mmio_stale_data=off [X86]
+					       tsx_async_abort=off [X86]
+					       kvm.nx_huge_pages=off [X86]
 					       no_entry_flush [PPC]
 					       no_uaccess_flush [PPC]
-					       nobp=0 [S390]
-					       nopti [X86,PPC]
-					       nospectre_v1 [X86,PPC]
-					       nospectre_v2 [X86,PPC,S390,ARM64]
-					       spec_store_bypass_disable=off [X86,PPC]
-					       spectre_v2_user=off [X86]
-					       ssbd=force-off [ARM64]
-					       tsx_async_abort=off [X86]
+					       mmio_stale_data=off [X86]
 
 				Exceptions:
 					       This does not have any effect on
@@ -3177,6 +3138,20 @@
 			in certain environments such as networked servers or
 			real-time systems.
 
+	no_hash_pointers
+			Force pointers printed to the console or buffers to be
+			unhashed.  By default, when a pointer is printed via %p
+			format string, that pointer is "hashed", i.e. obscured
+			by hashing the pointer value.  This is a security feature
+			that hides actual kernel addresses from unprivileged
+			users, but it also makes debugging the kernel more
+			difficult since unequal pointers can no longer be
+			compared.  However, if this command-line option is
+			specified, then all normal pointers will have their true
+			value printed. This option should only be specified when
+			debugging the kernel.  Please do not use on production
+			kernels.
+
 	nohibernate	[HIBERNATION] Disable hibernation and resume.
 
 	nohz=		[KNL] Boottime enable/disable dynamic ticks
@@ -3336,6 +3311,12 @@
 			This can be set from sysctl after boot.
 			See Documentation/admin-guide/sysctl/vm.rst for details.
 
+	of_devlink	[OF, KNL] Create device links between consumer and
+			supplier devices by scanning the devictree to infer the
+			consumer/supplier relationships.  A consumer device
+			will not be probed until all the supplier devices have
+			probed successfully.
+
 	ohci1394_dma=early	[HW] enable debugging via the ohci1394 driver.
 			See Documentation/debugging-via-ohci1394.txt for more
 			info.
@@ -3371,6 +3352,8 @@
 			deadlocking the machine.
 			This will also cause panics on machine check exceptions.
 			Useful together with panic=30 to trigger a reboot.
+
+	otg_device=	[meson] Set kernel otg mode in bootloader.
 
 	page_alloc.shuffle=
 			[KNL] Boolean flag to control whether the page allocator
@@ -3811,16 +3794,6 @@
 
 	printk.time=	Show timing data prefixed to each printk message line
 			Format: <bool>  (1/Y/y=enable, 0/N/n=disable)
-
-	proc_mem.force_override= [KNL]
-			Format: {always | ptrace | never}
-			Traditionally /proc/pid/mem allows memory permissions to be
-			overridden without restrictions. This option may be set to
-			restrict that. Can be one of:
-			- 'always': traditional behavior always allows mem overrides.
-			- 'ptrace': only allow mem overrides for active ptracers.
-			- 'never':  never allow mem overrides.
-			If not specified, default is the CONFIG_PROC_MEM_* choice.
 
 	processor.max_cstate=	[HW,ACPI]
 			Limit processor to maximum C-state
@@ -4358,18 +4331,6 @@
 
 	retain_initrd	[RAM] Keep initrd memory after extraction
 
-	retbleed=	[X86] Control mitigation of RETBleed (Arbitrary
-			Speculative Code Execution with Return Instructions)
-			vulnerability.
-
-			off         - unconditionally disable
-			auto        - automatically select a migitation
-
-			Selecting 'auto' will choose a mitigation method at run
-			time according to the CPU.
-
-			Not specifying this option is equivalent to retbleed=auto.
-
 	rfkill.default_state=
 		0	"airplane mode".  All wifi, bluetooth, wimax, gps, fm,
 			etc. communication is blocked by default.
@@ -4610,10 +4571,9 @@
 			retpoline,generic - Retpolines
 			retpoline,lfence  - LFENCE; indirect branch
 			retpoline,amd     - alias for retpoline,lfence
-			eibrs		  - Enhanced/Auto IBRS
-			eibrs,retpoline   - Enhanced/Auto IBRS + Retpolines
-			eibrs,lfence      - Enhanced/Auto IBRS + LFENCE
-			ibrs		  - use IBRS to protect kernel
+			eibrs		  - enhanced IBRS
+			eibrs,retpoline   - enhanced IBRS + Retpolines
+			eibrs,lfence      - enhanced IBRS + LFENCE
 
 			Not specifying this option is equivalent to
 			spectre_v2=auto.
@@ -5023,6 +4983,29 @@
 			with respect to transparent hugepages.
 			See Documentation/admin-guide/mm/transhuge.rst
 			for more details.
+
+	trusted.source=	[KEYS]
+			Format: <string>
+			This parameter identifies the trust source as a backend
+			for trusted keys implementation. Supported trust
+			sources:
+			- "tpm"
+			- "tee"
+			- "caam"
+			If not specified then it defaults to iterating through
+			the trust source list starting with TPM and assigns the
+			first trust source as a backend which is initialized
+			successfully during iteration.
+
+	trusted.rng=	[KEYS]
+			Format: <string>
+			The RNG used to generate key material for trusted keys.
+			Can be one of:
+			- "kernel"
+			- the same value as trusted.source: "tpm" or "tee"
+			- "default"
+			If not specified, "default" is used. In this case,
+			the RNG's choice is left to each individual trust source.
 
 	tsc=		Disable clocksource stability checks for TSC.
 			Format: <string>

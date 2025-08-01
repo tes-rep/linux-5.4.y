@@ -238,17 +238,14 @@ static int set_default_qdisc(struct ctl_table *table, int write,
 static int proc_do_dev_weight(struct ctl_table *table, int write,
 			   void __user *buffer, size_t *lenp, loff_t *ppos)
 {
-	static DEFINE_MUTEX(dev_weight_mutex);
-	int ret, weight;
+	int ret;
 
-	mutex_lock(&dev_weight_mutex);
-	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
-	if (!ret && write) {
-		weight = READ_ONCE(weight_p);
-		WRITE_ONCE(dev_rx_weight, weight * dev_weight_rx_bias);
-		WRITE_ONCE(dev_tx_weight, weight * dev_weight_tx_bias);
-	}
-	mutex_unlock(&dev_weight_mutex);
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (ret != 0)
+		return ret;
+
+	dev_rx_weight = weight_p * dev_weight_rx_bias;
+	dev_tx_weight = weight_p * dev_weight_tx_bias;
 
 	return ret;
 }
@@ -265,7 +262,7 @@ static int proc_do_rss_key(struct ctl_table *table, int write,
 	return proc_dostring(&fake_table, write, buffer, lenp, ppos);
 }
 
-#ifdef CONFIG_BPF_JIT
+#ifdef CONFIG_BPF_JIT_AMLOGIC
 static int proc_dointvec_minmax_bpf_enable(struct ctl_table *table, int write,
 					   void __user *buffer, size_t *lenp,
 					   loff_t *ppos)
@@ -356,7 +353,6 @@ static struct ctl_table net_core_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_do_dev_weight,
-		.extra1         = SYSCTL_ONE,
 	},
 	{
 		.procname	= "dev_weight_rx_bias",
@@ -364,7 +360,6 @@ static struct ctl_table net_core_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_do_dev_weight,
-		.extra1         = SYSCTL_ONE,
 	},
 	{
 		.procname	= "dev_weight_tx_bias",
@@ -372,7 +367,6 @@ static struct ctl_table net_core_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_do_dev_weight,
-		.extra1         = SYSCTL_ONE,
 	},
 	{
 		.procname	= "netdev_max_backlog",
@@ -388,14 +382,14 @@ static struct ctl_table net_core_table[] = {
 		.mode		= 0444,
 		.proc_handler	= proc_do_rss_key,
 	},
-#ifdef CONFIG_BPF_JIT
+#ifdef CONFIG_BPF_JIT_AMLOGIC
 	{
 		.procname	= "bpf_jit_enable",
 		.data		= &bpf_jit_enable,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax_bpf_enable,
-# ifdef CONFIG_BPF_JIT_ALWAYS_ON
+# ifdef CONFIG_BPF_JIT_ALWAYS_ON_AMLOGIC
 		.extra1		= SYSCTL_ONE,
 		.extra2		= SYSCTL_ONE,
 # else

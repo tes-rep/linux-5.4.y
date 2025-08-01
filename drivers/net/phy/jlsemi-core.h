@@ -63,8 +63,8 @@
 #define JL1XXX_MDI_TX_BM(n)	(n << 10)
 #define JL1XXX_MDI_TX_SRN	BIT(0)
 
-#define JL1XXX_PAGE7		7
-#define JL1XXX_REG16		16
+#define JL2XXX_PAGE7		7
+#define JL2XXX_REG16		16
 #define JL1XXX_RMII_MODE		BIT(3)
 #define JL1XXX_RMII_CLK_50M_INPUT	BIT(12)
 #define JL1XXX_RMII_TX_SKEW_MASK	(0xf << 8)
@@ -83,7 +83,6 @@
 #define JL2XXX_DSFT_EN		BIT(12)
 #define JL2XXX_DSFT_SMART_EN	BIT(13)
 #define JL2XXX_DSFT_TWO_WIRE_EN	BIT(14)
-#define JL2XXX_DSFT_AN_ERR_EN	BIT(15)
 #define JL2XXX_DSFT_STL_MASK	0x03e0
 #define JL2XXX_DSFT_STL_CNT(n)	(((n << 5) & JL2XXX_DSFT_STL_MASK))
 #define JL2XXX_DSFT_AN_MASK	0x001f
@@ -103,8 +102,8 @@
 #define JL2XXX_MAC_ADDR0_REG	0x0013
 #define JL2XXX_WOL_EVENT	BIT(1)
 #define JL2XXX_WOL_POLARITY	BIT(14)
-#define JL2XXX_WOL_EN		BIT(15)
-#define JL2XXX_WOL_GLB_EN	BIT(6)
+#define JL2XXX_WOL_EN		BIT(6)
+#define JL2XXX_WOL_GLB_EN	BIT(15)
 
 #define JL2XXX_PAGE2626		2626
 #define JL2XXX_INTR_CTRL_REG	18
@@ -133,9 +132,6 @@
 #define JL2XXX_RGMII_CTRL_REG	17
 
 #define JL2XXX_PAGE18		18
-#define JL2XXX_RXC_OUT_REG	21
-#define JL2XXX_RXC_OUT		BIT(14)
-
 #define JL2XXX_WORK_MODE_REG	21
 #define JL2XXX_WORK_MODE_MASK	0x7
 
@@ -157,10 +153,17 @@
 
 #define JL2XXX_PAGE174		174
 
+#define JL2XXX_PAGE201		201
+#define JL2XXX_RX_AMP2_MASK	0xfc0
+#define JL2XXX_RX_AMP2		BIT(7)
 #define JL2XXX_REG29		29
+#define JL2XXX_FG_LP_10M_MASK	0xf0
+#define JL2XXX_FG_LP_10M	BIT(4)
 
-#define JL2XXX_PAGE191		191
-#define JL2XXX_RGMII_CFG	BIT(3)
+#define JL2XXX_PAGE206		206
+#define JL2XXX_REG22		22
+#define JL2XXX_RX_AMP_SIG_MASK	0x1e0
+#define JL2XXX_RX_AMP_SIG	(BIT(5) | BIT(6))
 
 #define JL2XXX_PAGE258		258
 #define JL2XXX_SLEW_RATE_CTRL_REG	23
@@ -168,6 +171,7 @@
 #define JL2XXX_SLEW_RATE_REF_CLK	BIT(13)
 #define JL2XXX_SLEW_RATE_SEL_CLK	BIT(14)
 
+#define JL2XXX_PAGE18		18
 #define JL2XXX_REG20		20
 #define JL2XXX_SPEED1000_NO_AN	(BIT(11) | BIT(10))
 
@@ -202,6 +206,8 @@ static const struct jl_hw_stat jl_phy[] = {
 	},
 };
 
+static const u16 patch_fw_versions[] = {0x1101, 0x9101, 0x9107};
+
 static const struct jl_hw_stat jl2xxx_hw_stats[] = {
 	{
 		.string	= "phy_patch_version",
@@ -216,6 +222,22 @@ static const struct jl_hw_stat jl2xxx_hw_stats[] = {
 	},
 };
 
+enum jl_static_op_mode {
+	STATIC_NONE		= 0,
+	STATIC_C_MACRO		= 1,
+	STATIC_DEVICE_TREE	= 2,
+};
+
+enum jl_dynamic_op_mode {
+	DYNAMIC_NONE		= 0,
+	DYNAMIC_ETHTOOL		= 1,
+};
+
+struct jl_config_mode {
+	enum jl_static_op_mode static_op;
+	enum jl_dynamic_op_mode dynamic_op;
+};
+
 struct jl_led_ctrl {
 	u32 enable;			/* LED control enable */
 	u32 mode;			/* LED work mode */
@@ -223,82 +245,79 @@ struct jl_led_ctrl {
 	u32 global_on;			/* LED global twinkle hold on time */
 	u32 gpio_output;		/* LED is used as gpio output */
 	u32 polarity;			/* LED polarity */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* LED config operation mode */
 };
 
 struct jl_fld_ctrl {
 	u32 enable;			/* Fast link down control enable */
 	u32 delay;			/* Fast link down time */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Fast link down config
+					 *operation mode
+					 */
 };
 
 struct jl_wol_ctrl {
 	u32 enable;			/* Wake On LAN control enable */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Wake On LAN config operation mode */
 };
 
 struct jl_intr_ctrl {
 	u32 enable;			/* Interrupt control enable */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Interrupt config operation mode */
 };
 
 struct jl_downshift_ctrl {
 	u32 enable;			/* Downshift control enable */
 	u32 count;			/* Downshift control count */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Downshift config operation mode */
 };
 
 struct jl_rgmii_ctrl {
 	u32 enable;			/* Rgmii control enable */
 	u32 rx_delay;			/* Rgmii control rx delay */
 	u32 tx_delay;			/* Rgmii control tx delay */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Rgmii config opeartion mode */
 };
 
 struct jl_patch_ctrl {
 	u32 enable;			/* Patch control enable */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Patch config operation mode */
 };
 
 struct jl_clk_ctrl {
 	u32 enable;			/* Clock 125M control enable */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Clock 125M config_opeartion mode */
 };
 
 struct jl_work_mode_ctrl {
 	u32 enable;			/* Work mode control enable */
 	u32 mode;			/* Work mode select mode */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Work mode config opeartion mode */
 };
 
 struct jl_loopback_ctrl {
 	u32 enable;			/* Loopback control enable */
 	u32 mode;			/* Loopback select mode */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Loopback config opeartion mode */
 };
 
 struct jl_mdi_ctrl {
 	u32 enable;			/* Mdi control enable */
 	u32 rate;			/* Mdi select Rate */
 	u32 amplitude;			/* Mdi select amplitude */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Mdi config opeartion mode */
 };
 
 struct jl_rmii_ctrl {
 	u32 enable;			/* Rmii control enable */
 	u32 tx_timing;			/* Rmii modify tx timing */
 	u32 rx_timing;			/* Rmii modify rx timing */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Rmii config opeartion mode */
 };
 
 struct jl_slew_rate_ctrl {
 	u32 enable;			/* Slew rate control enable */
-	bool ethtool;			/* Whether the ethtool is supported */
-};
-
-struct jl_rxc_out_ctrl {
-	u32 enable;			/* Rx clock out control enable */
-	bool ethtool;			/* Whether the ethtool is supported */
+	struct jl_config_mode op;	/* Slew rate control opeartion mode */
 };
 
 struct jl1xxx_priv {
@@ -308,6 +327,7 @@ struct jl1xxx_priv {
 	bool static_inited;		/* Initialization flag */
 	struct jl_mdi_ctrl mdi;
 	struct jl_rmii_ctrl rmii;
+	struct device dev;
 };
 
 struct jl2xxx_priv {
@@ -326,14 +346,18 @@ struct jl2xxx_priv {
 	struct jl_work_mode_ctrl work_mode;
 	struct jl_loopback_ctrl lpbk;
 	struct jl_slew_rate_ctrl slew_rate;
-	struct jl_rxc_out_ctrl rxc_out;
+	struct device dev;
 };
 
 /* macros to simplify debug checking */
 #define JLSEMI_PHY_MSG(msg, args...) printk(msg, ## args)
 
 /************************* JLSemi iteration code *************************/
+int config_init_r4p1(struct phy_device *phydev);
+
 struct device *jlsemi_get_mdio(struct phy_device *phydev);
+
+struct device *jlsemi_get_device(struct phy_device *phydev);
 
 int jl2xxx_downshift_dynamic_op_get(struct phy_device *phydev, u8 *data);
 
@@ -361,9 +385,13 @@ int jl2xxx_fld_dynamic_op_get(struct phy_device *phydev, u8 *msecs);
 
 int jl2xxx_fld_dynamic_op_set(struct phy_device *phydev, const u8 *msecs);
 
+int jl1xxx_operation_mode_select(struct phy_device *phydev);
+
 int jl1xxx_operation_args_get(struct phy_device *phydev);
 
 int jl1xxx_static_op_init(struct phy_device *phydev);
+
+int jl2xxx_operation_mode_select(struct phy_device *phydev);
 
 int jl2xxx_operation_args_get(struct phy_device *phydev);
 
@@ -371,10 +399,9 @@ int jl2xxx_static_op_init(struct phy_device *phydev);
 
 int jlsemi_soft_reset(struct phy_device *phydev);
 
-int jl2xxx_pre_init(struct phy_device *phydev,
-		    u32 *init_data, u16 data_len,
-		    u16 *patch_fw_versions, u16 versions_len,
-		    u16 patch_version);
+int jlsemi_aneg_done(struct phy_device *phydev);
+
+int jl2xxx_pre_init(struct phy_device *phydev);
 
 bool jl2xxx_read_fiber_status(struct phy_device *phydev);
 

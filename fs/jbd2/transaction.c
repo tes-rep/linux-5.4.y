@@ -149,7 +149,7 @@ static void wait_transaction_locked(journal_t *journal)
 	int need_to_start;
 	tid_t tid = journal->j_running_transaction->t_tid;
 
-	prepare_to_wait_exclusive(&journal->j_wait_transaction_locked, &wait,
+	prepare_to_wait(&journal->j_wait_transaction_locked, &wait,
 			TASK_UNINTERRUPTIBLE);
 	need_to_start = !tid_geq(journal->j_commit_request, tid);
 	read_unlock(&journal->j_state_lock);
@@ -175,7 +175,7 @@ static void wait_transaction_switching(journal_t *journal)
 		read_unlock(&journal->j_state_lock);
 		return;
 	}
-	prepare_to_wait_exclusive(&journal->j_wait_transaction_locked, &wait,
+	prepare_to_wait(&journal->j_wait_transaction_locked, &wait,
 			TASK_UNINTERRUPTIBLE);
 	read_unlock(&journal->j_state_lock);
 	/*
@@ -490,7 +490,7 @@ EXPORT_SYMBOL(jbd2__journal_start);
 
 
 /**
- * jbd2_journal_start() - Obtain a new handle.
+ * handle_t *jbd2_journal_start() - Obtain a new handle.
  * @journal: Journal to start transaction on.
  * @nblocks: number of block buffer we might modify
  *
@@ -525,7 +525,7 @@ void jbd2_journal_free_reserved(handle_t *handle)
 EXPORT_SYMBOL(jbd2_journal_free_reserved);
 
 /**
- * jbd2_journal_start_reserved() - start reserved handle
+ * int jbd2_journal_start_reserved() - start reserved handle
  * @handle: handle to start
  * @type: for handle statistics
  * @line_no: for handle statistics
@@ -579,7 +579,7 @@ int jbd2_journal_start_reserved(handle_t *handle, unsigned int type,
 EXPORT_SYMBOL(jbd2_journal_start_reserved);
 
 /**
- * jbd2_journal_extend() - extend buffer credits.
+ * int jbd2_journal_extend() - extend buffer credits.
  * @handle:  handle to 'extend'
  * @nblocks: nr blocks to try to extend by.
  *
@@ -659,7 +659,7 @@ error_out:
 
 
 /**
- * jbd2__journal_restart() - restart a handle .
+ * int jbd2_journal_restart() - restart a handle .
  * @handle:  handle to restart
  * @nblocks: nr credits requested
  * @gfp_mask: memory allocation flags (for start_this_handle)
@@ -736,7 +736,7 @@ int jbd2_journal_restart(handle_t *handle, int nblocks)
 EXPORT_SYMBOL(jbd2_journal_restart);
 
 /**
- * jbd2_journal_lock_updates () - establish a transaction barrier.
+ * void jbd2_journal_lock_updates () - establish a transaction barrier.
  * @journal:  Journal to establish a barrier on.
  *
  * This locks out any further updates from being started, and blocks
@@ -795,7 +795,7 @@ void jbd2_journal_lock_updates(journal_t *journal)
 }
 
 /**
- * jbd2_journal_unlock_updates () - release barrier
+ * void jbd2_journal_unlock_updates (journal_t* journal) - release barrier
  * @journal:  Journal to release the barrier on.
  *
  * Release a transaction barrier obtained with jbd2_journal_lock_updates().
@@ -810,7 +810,7 @@ void jbd2_journal_unlock_updates (journal_t *journal)
 	write_lock(&journal->j_state_lock);
 	--journal->j_barrier_count;
 	write_unlock(&journal->j_state_lock);
-	wake_up_all(&journal->j_wait_transaction_locked);
+	wake_up(&journal->j_wait_transaction_locked);
 }
 
 static void warn_dirty_buffer(struct buffer_head *bh)
@@ -1103,8 +1103,7 @@ out:
 }
 
 /**
- * jbd2_journal_get_write_access() - notify intent to modify a buffer
- *				     for metadata (not data) update.
+ * int jbd2_journal_get_write_access() - notify intent to modify a buffer for metadata (not data) update.
  * @handle: transaction to add buffer modifications to
  * @bh:     bh to be used for metadata writes
  *
@@ -1148,7 +1147,7 @@ int jbd2_journal_get_write_access(handle_t *handle, struct buffer_head *bh)
  * unlocked buffer beforehand. */
 
 /**
- * jbd2_journal_get_create_access () - notify intent to use newly created bh
+ * int jbd2_journal_get_create_access () - notify intent to use newly created bh
  * @handle: transaction to new buffer to
  * @bh: new buffer.
  *
@@ -1228,7 +1227,7 @@ out:
 }
 
 /**
- * jbd2_journal_get_undo_access() -  Notify intent to modify metadata with
+ * int jbd2_journal_get_undo_access() -  Notify intent to modify metadata with
  *     non-rewindable consequences
  * @handle: transaction
  * @bh: buffer to undo
@@ -1305,7 +1304,7 @@ out:
 }
 
 /**
- * jbd2_journal_set_triggers() - Add triggers for commit writeout
+ * void jbd2_journal_set_triggers() - Add triggers for commit writeout
  * @bh: buffer to trigger on
  * @type: struct jbd2_buffer_trigger_type containing the trigger(s).
  *
@@ -1347,7 +1346,7 @@ void jbd2_buffer_abort_trigger(struct journal_head *jh,
 }
 
 /**
- * jbd2_journal_dirty_metadata() -  mark a buffer as containing dirty metadata
+ * int jbd2_journal_dirty_metadata() -  mark a buffer as containing dirty metadata
  * @handle: transaction to add buffer to.
  * @bh: buffer to mark
  *
@@ -1376,6 +1375,8 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 	struct journal_head *jh;
 	int ret = 0;
 
+	if (is_handle_aborted(handle))
+		return -EROFS;
 	if (!buffer_jbd(bh))
 		return -EUCLEAN;
 
@@ -1419,21 +1420,8 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 		goto out;
 	}
 
-	jbd_lock_bh_state(bh);
-
-	if (is_handle_aborted(handle)) {
-		/*
-		 * Check journal aborting with @jh->b_state_lock locked,
-		 * since 'jh->b_transaction' could be replaced with
-		 * 'jh->b_next_transaction' during old transaction
-		 * committing if journal aborted, which may fail
-		 * assertion on 'jh->b_frozen_data == NULL'.
-		 */
-		ret = -EROFS;
-		goto out_unlock_bh;
-	}
-
 	journal = transaction->t_journal;
+	jbd_lock_bh_state(bh);
 
 	if (jh->b_modified == 0) {
 		/*
@@ -1526,7 +1514,7 @@ out:
 }
 
 /**
- * jbd2_journal_forget() - bforget() for potentially-journaled buffers.
+ * void jbd2_journal_forget() - bforget() for potentially-journaled buffers.
  * @handle: transaction handle
  * @bh:     bh to 'forget'
  *
@@ -1701,7 +1689,7 @@ not_jbd:
 }
 
 /**
- * jbd2_journal_stop() - complete a transaction
+ * int jbd2_journal_stop() - complete a transaction
  * @handle: transaction to complete.
  *
  * All done for a particular handle.
@@ -2049,7 +2037,7 @@ out:
 }
 
 /**
- * jbd2_journal_try_to_free_buffers() - try to free page buffers.
+ * int jbd2_journal_try_to_free_buffers() - try to free page buffers.
  * @journal: journal for operation
  * @page: to try and free
  * @gfp_mask: we use the mask to detect how hard should we try to release
@@ -2388,7 +2376,7 @@ zap_buffer_unlocked:
 }
 
 /**
- * jbd2_journal_invalidatepage()
+ * void jbd2_journal_invalidatepage()
  * @journal: journal to use for flush...
  * @page:    page to flush
  * @offset:  start of the range to invalidate

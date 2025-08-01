@@ -262,10 +262,12 @@ armpmu_add(struct perf_event *event, int flags)
 	if (idx < 0)
 		return idx;
 
-	/* The newly-allocated counter should be empty */
-	WARN_ON_ONCE(hw_events->events[idx]);
-
+	/*
+	 * If there is an event in the counter we are going to use then make
+	 * sure it is disabled.
+	 */
 	event->hw.idx = idx;
+	armpmu->disable(event);
 	hw_events->events[idx] = event;
 
 	hwc->state = PERF_HES_STOPPED | PERF_HES_UPTODATE;
@@ -351,7 +353,11 @@ static irqreturn_t armpmu_dispatch_irq(int irq, void *dev)
 		return IRQ_NONE;
 
 	start_clock = sched_clock();
+#ifdef CONFIG_AMLOGIC_MODIFY
+	ret = armpmu->handle_irq(irq, armpmu);
+#else
 	ret = armpmu->handle_irq(armpmu);
+#endif
 	finish_clock = sched_clock();
 
 	perf_sample_event_took(finish_clock - start_clock);

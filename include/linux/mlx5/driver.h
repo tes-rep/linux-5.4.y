@@ -56,8 +56,6 @@
 #include <linux/ptp_clock_kernel.h>
 #include <net/devlink.h>
 
-#define MLX5_ADEV_NAME "mlx5_core"
-
 enum {
 	MLX5_BOARD_ID_LEN = 64,
 };
@@ -906,7 +904,7 @@ void mlx5_cmd_allowed_opcode(struct mlx5_core_dev *dev, u16 opcode);
 struct mlx5_async_ctx {
 	struct mlx5_core_dev *dev;
 	atomic_t num_inflight;
-	struct completion inflight_done;
+	struct wait_queue_head wait;
 };
 
 struct mlx5_async_work;
@@ -1132,18 +1130,7 @@ static inline bool mlx5_core_is_pf(const struct mlx5_core_dev *dev)
 	return dev->coredev_type == MLX5_COREDEV_PF;
 }
 
-static inline bool mlx5_core_is_vf(const struct mlx5_core_dev *dev)
-{
-	return dev->coredev_type == MLX5_COREDEV_VF;
-}
-
-static inline bool mlx5_core_same_coredev_type(const struct mlx5_core_dev *dev1,
-					       const struct mlx5_core_dev *dev2)
-{
-	return dev1->coredev_type == dev2->coredev_type;
-}
-
-static inline bool mlx5_core_is_ecpf(const struct mlx5_core_dev *dev)
+static inline bool mlx5_core_is_ecpf(struct mlx5_core_dev *dev)
 {
 	return dev->caps.embedded_cpu;
 }

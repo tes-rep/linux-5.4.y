@@ -1,21 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0+
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Amlogic Thermal Sensor Driver
- *
- * Copyright (C) 2017 Huan Biao <huan.biao@amlogic.com>
- * Copyright (C) 2019 Guillaume La Roque <glaroque@baylibre.com>
- *
- * Register value to celsius temperature formulas:
- *	Read_Val	    m * U
- * U = ---------, Uptat = ---------
- *	2^16		  1 + n * U
- *
- * Temperature = A * ( Uptat + u_efuse / 2^16 )- B
- *
- *  A B m n : calibration parameters
- *  u_efuse : fused calibration value, it's a signed 16 bits value
+ * Copyright (c) 2019 Amlogic, Inc. All rights reserved.
  */
-
 #include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/io.h>
@@ -29,6 +15,7 @@
 #include <linux/thermal.h>
 
 #include "thermal_core.h"
+#include "thermal_hwmon.h"
 
 #define TSENSOR_CFG_REG1			0x4
 	#define TSENSOR_CFG_REG1_RSET_VBG	BIT(12)
@@ -67,7 +54,11 @@
 
 /**
  * struct amlogic_thermal_soc_calib_data
- * @A, B, m, n: calibration parameters
+ * @A: calibration parameters
+ * @B: calibration parameters
+ * @m: calibration parameters
+ * @n: calibration parameters
+ *
  * This structure is required for configuration of amlogic thermal driver.
  */
 struct amlogic_thermal_soc_calib_data {
@@ -94,7 +85,7 @@ struct amlogic_thermal {
 	struct platform_device *pdev;
 	const struct amlogic_thermal_data *data;
 	struct regmap *regmap;
-	struct regmap *sec_ao_map;
+	void __iomem *sec_ao_map;
 	struct clk *clk;
 	struct thermal_zone_device *tzd;
 	u32 trim_info;
@@ -110,21 +101,21 @@ static int amlogic_thermal_code_to_millicelsius(struct amlogic_thermal *pdata,
 	const struct amlogic_thermal_soc_calib_data *param =
 					pdata->data->calibration_parameters;
 	int temp;
-	s64 factor, Uptat, uefuse;
+	s64 factor, uptat, uefuse;
 
 	uefuse = pdata->trim_info & TSENSOR_TRIM_SIGN_MASK ?
 			     ~(pdata->trim_info & TSENSOR_TRIM_TEMP_MASK) + 1 :
 			     (pdata->trim_info & TSENSOR_TRIM_TEMP_MASK);
 
-	factor = param->n * temp_code;
+	factor = (s64)param->n * (s64)temp_code;
 	factor = div_s64(factor, 100);
 
-	Uptat = temp_code * param->m;
-	Uptat = div_s64(Uptat, 100);
-	Uptat = Uptat * BIT(16);
-	Uptat = div_s64(Uptat, BIT(16) + factor);
+	uptat = (s64)temp_code * (s64)param->m;
+	uptat = div_s64(uptat, 100);
+	uptat = uptat * BIT(16);
+	uptat = div_s64(uptat, BIT(16) + factor);
 
-	temp = (Uptat + uefuse) * param->A;
+	temp = (uptat + uefuse) * param->A;
 	temp = div_s64(temp, BIT(16));
 	temp = (temp - param->B) * 100;
 
@@ -136,8 +127,8 @@ static int amlogic_thermal_initialize(struct amlogic_thermal *pdata)
 	int ret = 0;
 	int ver;
 
-	regmap_read(pdata->sec_ao_map, pdata->data->u_efuse_off,
-		    &pdata->trim_info);
+	pdata->trim_info = readl(pdata->sec_ao_map);
+	pr_info("tsensor trim info: 0x%x!\n", pdata->trim_info);
 
 	ver = TSENSOR_TRIM_VERSION(pdata->trim_info);
 
@@ -194,40 +185,44 @@ static const struct thermal_zone_of_device_ops amlogic_thermal_ops = {
 	.get_temp	= amlogic_thermal_get_temp,
 };
 
-static const struct regmap_config amlogic_thermal_regmap_config_g12a = {
+static const struct regmap_config amlogic_thermal_regmap_config_tm2 = {
 	.reg_bits = 8,
 	.val_bits = 32,
 	.reg_stride = 4,
 	.max_register = TSENSOR_STAT9,
 };
 
-static const struct amlogic_thermal_soc_calib_data amlogic_thermal_g12a = {
+static const struct amlogic_thermal_soc_calib_data amlogic_thermal_tm2 = {
 	.A = 9411,
 	.B = 3159,
 	.m = 424,
 	.n = 324,
 };
 
-static const struct amlogic_thermal_data amlogic_thermal_g12a_cpu_param = {
+static const struct amlogic_thermal_data amlogic_thermal_tm2_cpu_param = {
 	.u_efuse_off = 0x128,
-	.calibration_parameters = &amlogic_thermal_g12a,
-	.regmap_config = &amlogic_thermal_regmap_config_g12a,
+	.calibration_parameters = &amlogic_thermal_tm2,
+	.regmap_config = &amlogic_thermal_regmap_config_tm2,
 };
 
-static const struct amlogic_thermal_data amlogic_thermal_g12a_ddr_param = {
+static const struct amlogic_thermal_data amlogic_thermal_tm2_ddr_param = {
 	.u_efuse_off = 0xf0,
-	.calibration_parameters = &amlogic_thermal_g12a,
-	.regmap_config = &amlogic_thermal_regmap_config_g12a,
+	.calibration_parameters = &amlogic_thermal_tm2,
+	.regmap_config = &amlogic_thermal_regmap_config_tm2,
 };
 
 static const struct of_device_id of_amlogic_thermal_match[] = {
 	{
-		.compatible = "amlogic,g12a-ddr-thermal",
-		.data = &amlogic_thermal_g12a_ddr_param,
+		.compatible = "amlogic, tm2-ddr-thermal",
+		.data = &amlogic_thermal_tm2_ddr_param,
 	},
 	{
-		.compatible = "amlogic,g12a-cpu-thermal",
-		.data = &amlogic_thermal_g12a_cpu_param,
+		.compatible = "amlogic, tm2-cpu-thermal",
+		.data = &amlogic_thermal_tm2_cpu_param,
+	},
+	{
+		.compatible = "amlogic, tm2-sar-thermal",
+		.data = &amlogic_thermal_tm2_cpu_param,
 	},
 	{ /* sentinel */ }
 };
@@ -237,9 +232,11 @@ static int amlogic_thermal_probe(struct platform_device *pdev)
 {
 	struct amlogic_thermal *pdata;
 	struct device *dev = &pdev->dev;
+	struct resource *res;
 	void __iomem *base;
 	int ret;
 
+	pr_info("amlogic thermal probe\n");
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
 		return -ENOMEM;
@@ -248,9 +245,17 @@ static int amlogic_thermal_probe(struct platform_device *pdev)
 	pdata->pdev = pdev;
 	platform_set_drvdata(pdev, pdata);
 
-	base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(base))
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		dev_err(dev, "no memory resource defined\n");
+		return -ENODEV;
+	}
+
+	base = devm_ioremap_resource(dev, res);
+	if (IS_ERR(base)) {
+		dev_err(dev, "failed to get io address\n");
 		return PTR_ERR(base);
+	}
 
 	pdata->regmap = devm_regmap_init_mmio(dev, base,
 					      pdata->data->regmap_config);
@@ -264,10 +269,15 @@ static int amlogic_thermal_probe(struct platform_device *pdev)
 		return PTR_ERR(pdata->clk);
 	}
 
-	pdata->sec_ao_map = syscon_regmap_lookup_by_phandle
-		(pdev->dev.of_node, "amlogic,ao-secure");
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	if (!res) {
+		dev_err(dev, "no memory resource defined\n");
+		return -ENODEV;
+	}
+
+	pdata->sec_ao_map = devm_ioremap_resource(dev, res);
 	if (IS_ERR(pdata->sec_ao_map)) {
-		dev_err(dev, "syscon regmap lookup failed.\n");
+		dev_err(dev, "failed to get io address\n");
 		return PTR_ERR(pdata->sec_ao_map);
 	}
 
@@ -280,6 +290,9 @@ static int amlogic_thermal_probe(struct platform_device *pdev)
 		dev_err(dev, "Failed to register tsensor: %d\n", ret);
 		return ret;
 	}
+
+	if (thermal_add_hwmon_sysfs(pdata->tzd))
+		dev_warn(&pdev->dev, "Failed to add hwmon sysfs attributes\n");
 
 	ret = amlogic_thermal_initialize(pdata);
 	if (ret)
@@ -321,7 +334,7 @@ static struct platform_driver amlogic_thermal_driver = {
 		.of_match_table = of_amlogic_thermal_match,
 	},
 	.probe	= amlogic_thermal_probe,
-	.remove	= amlogic_thermal_remove,
+	.remove	= amlogic_thermal_remove
 };
 
 module_platform_driver(amlogic_thermal_driver);
@@ -329,3 +342,4 @@ module_platform_driver(amlogic_thermal_driver);
 MODULE_AUTHOR("Guillaume La Roque <glaroque@baylibre.com>");
 MODULE_DESCRIPTION("Amlogic thermal driver");
 MODULE_LICENSE("GPL v2");
+

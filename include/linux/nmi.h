@@ -122,8 +122,6 @@ int watchdog_nmi_probe(void);
 int watchdog_nmi_enable(unsigned int cpu);
 void watchdog_nmi_disable(unsigned int cpu);
 
-void lockup_detector_reconfigure(void);
-
 /**
  * touch_nmi_watchdog - restart NMI watchdog timeout.
  *
@@ -197,7 +195,7 @@ u64 hw_nmi_get_sample_period(int watchdog_thresh);
 #endif
 
 #if defined(CONFIG_HARDLOCKUP_CHECK_TIMESTAMP) && \
-    defined(CONFIG_HARDLOCKUP_DETECTOR_PERF)
+    defined(CONFIG_HARDLOCKUP_DETECTOR)
 void watchdog_update_hrtimer_threshold(u64 period);
 #else
 static inline void watchdog_update_hrtimer_threshold(u64 period) { }
@@ -214,6 +212,12 @@ extern int proc_watchdog_thresh(struct ctl_table *, int ,
 				void __user *, size_t *, loff_t *);
 extern int proc_watchdog_cpumask(struct ctl_table *, int,
 				 void __user *, size_t *, loff_t *);
+
+#ifdef CONFIG_HARDLOCKUP_DETECTOR_OTHER_CPU
+extern void watchdog_check_hardlockup_other_cpu(void);
+extern int watchdog_nmi_enable(unsigned int cpu);
+extern void watchdog_nmi_disable(unsigned int cpu);
+#endif
 
 #ifdef CONFIG_HAVE_ACPI_APEI_NMI
 #include <asm/nmi.h>

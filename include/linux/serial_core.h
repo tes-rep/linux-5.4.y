@@ -17,6 +17,7 @@
 #include <linux/tty.h>
 #include <linux/mutex.h>
 #include <linux/sysrq.h>
+#include <linux/android_kabi.h>
 #include <uapi/linux/serial_core.h>
 
 #ifdef CONFIG_SERIAL_CORE_CONSOLE
@@ -79,6 +80,9 @@ struct uart_ops {
 	void		(*poll_put_char)(struct uart_port *, unsigned char);
 	int		(*poll_get_char)(struct uart_port *);
 #endif
+
+	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_RESERVE(2);
 };
 
 #define NO_POLL_CHAR		0x00ff0000
@@ -253,86 +257,10 @@ struct uart_port {
 	struct serial_rs485     rs485;
 	struct serial_iso7816   iso7816;
 	void			*private_data;		/* generic platform data pointer */
+
+	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_RESERVE(2);
 };
-
-/**
- * uart_port_lock - Lock the UART port
- * @up:		Pointer to UART port structure
- */
-static inline void uart_port_lock(struct uart_port *up)
-{
-	spin_lock(&up->lock);
-}
-
-/**
- * uart_port_lock_irq - Lock the UART port and disable interrupts
- * @up:		Pointer to UART port structure
- */
-static inline void uart_port_lock_irq(struct uart_port *up)
-{
-	spin_lock_irq(&up->lock);
-}
-
-/**
- * uart_port_lock_irqsave - Lock the UART port, save and disable interrupts
- * @up:		Pointer to UART port structure
- * @flags:	Pointer to interrupt flags storage
- */
-static inline void uart_port_lock_irqsave(struct uart_port *up, unsigned long *flags)
-{
-	spin_lock_irqsave(&up->lock, *flags);
-}
-
-/**
- * uart_port_trylock - Try to lock the UART port
- * @up:		Pointer to UART port structure
- *
- * Returns: True if lock was acquired, false otherwise
- */
-static inline bool uart_port_trylock(struct uart_port *up)
-{
-	return spin_trylock(&up->lock);
-}
-
-/**
- * uart_port_trylock_irqsave - Try to lock the UART port, save and disable interrupts
- * @up:		Pointer to UART port structure
- * @flags:	Pointer to interrupt flags storage
- *
- * Returns: True if lock was acquired, false otherwise
- */
-static inline bool uart_port_trylock_irqsave(struct uart_port *up, unsigned long *flags)
-{
-	return spin_trylock_irqsave(&up->lock, *flags);
-}
-
-/**
- * uart_port_unlock - Unlock the UART port
- * @up:		Pointer to UART port structure
- */
-static inline void uart_port_unlock(struct uart_port *up)
-{
-	spin_unlock(&up->lock);
-}
-
-/**
- * uart_port_unlock_irq - Unlock the UART port and re-enable interrupts
- * @up:		Pointer to UART port structure
- */
-static inline void uart_port_unlock_irq(struct uart_port *up)
-{
-	spin_unlock_irq(&up->lock);
-}
-
-/**
- * uart_port_unlock_irqrestore - Unlock the UART port, restore interrupts
- * @up:		Pointer to UART port structure
- * @flags:	The saved interrupt flags for restore
- */
-static inline void uart_port_unlock_irqrestore(struct uart_port *up, unsigned long flags)
-{
-	spin_unlock_irqrestore(&up->lock, flags);
-}
 
 static inline int serial_port_in(struct uart_port *up, int offset)
 {
@@ -376,23 +304,6 @@ struct uart_state {
 /* number of characters left in xmit buffer before we ask for more */
 #define WAKEUP_CHARS		256
 
-/**
- * uart_xmit_advance - Advance xmit buffer and account Tx'ed chars
- * @up: uart_port structure describing the port
- * @chars: number of characters sent
- *
- * This function advances the tail of circular xmit buffer by the number of
- * @chars transmitted and handles accounting of transmitted bytes (into
- * @up's icount.tx).
- */
-static inline void uart_xmit_advance(struct uart_port *up, unsigned int chars)
-{
-	struct circ_buf *xmit = &up->state->xmit;
-
-	xmit->tail = (xmit->tail + chars) & (UART_XMIT_SIZE - 1);
-	up->icount.tx += chars;
-}
-
 struct module;
 struct tty_driver;
 
@@ -411,6 +322,8 @@ struct uart_driver {
 	 */
 	struct uart_state	*state;
 	struct tty_driver	*tty_driver;
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 void uart_write_wakeup(struct uart_port *port);
@@ -472,6 +385,11 @@ extern const struct earlycon_id *__earlycon_table_end[];
 #define OF_EARLYCON_DECLARE(_name, compat, fn)				\
 	_OF_EARLYCON_DECLARE(_name, compat, fn,				\
 			     __UNIQUE_ID(__earlycon_##_name))
+
+#ifdef CONFIG_AMLOGIC_MODIFY
+#define OF_EARLYCON_DECLARE_COMP(_name, compact, fn) \
+	_OF_EARLYCON_DECLARE(_name, compact, fn, __LINE__ ## __COUNTER__)
+#endif
 
 #define EARLYCON_DECLARE(_name, fn)	OF_EARLYCON_DECLARE(_name, "", fn)
 

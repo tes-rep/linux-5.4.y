@@ -27,7 +27,6 @@ menuconfig DRM
 config DRM_MIPI_DBI
 	tristate
 	depends on DRM
-	select DRM_KMS_HELPER
 
 config DRM_MIPI_DSI
 	bool
@@ -199,6 +198,13 @@ config DRM_VM
 config DRM_SCHED
 	tristate
 	depends on DRM
+
+config AMLOGIC_DRM_NONROOT
+	bool "support drm whether require root privileges"
+	default n
+	depends on DRM && AMLOGIC_MODIFY
+	help
+		drmSetMaster and drmDropMaster whether require root privileges
 
 source "drivers/gpu/drm/i2c/Kconfig"
 

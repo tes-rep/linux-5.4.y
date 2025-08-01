@@ -93,7 +93,9 @@
 #include <linux/kcov.h>
 #include <linux/livepatch.h>
 #include <linux/thread_info.h>
+#include <linux/cpufreq_times.h>
 #include <linux/stackleak.h>
+#include <linux/scs.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -101,6 +103,10 @@
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
+
+#ifdef CONFIG_AMLOGIC_VMAP
+#include <linux/amlogic/vmap_stack.h>
+#endif
 
 #include <trace/events/sched.h>
 
@@ -254,6 +260,9 @@ static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 	}
 	return stack;
 #else
+#ifdef CONFIG_AMLOGIC_VMAP
+	return aml_stack_alloc(node, tsk);
+#else /* CONFIG_AMLOGIC_VMAP */
 	struct page *page = alloc_pages_node(node, THREADINFO_GFP,
 					     THREAD_SIZE_ORDER);
 
@@ -262,11 +271,15 @@ static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 		return tsk->stack;
 	}
 	return NULL;
+#endif /* CONFIG_AMLOGIC_VMAP */
 #endif
 }
 
 static inline void free_thread_stack(struct task_struct *tsk)
 {
+#ifdef CONFIG_AMLOGIC_VMAP
+	aml_stack_free(tsk);
+#else /* CONFIG_AMLOGIC_VMAP */
 #ifdef CONFIG_VMAP_STACK
 	struct vm_struct *vm = task_stack_vm_area(tsk);
 
@@ -295,6 +308,7 @@ static inline void free_thread_stack(struct task_struct *tsk)
 #endif
 
 	__free_pages(virt_to_page(tsk->stack), THREAD_SIZE_ORDER);
+#endif /* CONFIG_AMLOGIC_VMAP */
 }
 # else
 static struct kmem_cache *thread_stack_cache;
@@ -369,6 +383,9 @@ void vm_area_free(struct vm_area_struct *vma)
 
 static void account_kernel_stack(struct task_struct *tsk, int account)
 {
+#ifdef CONFIG_AMLOGIC_VMAP
+	aml_account_task_stack(tsk, account);
+#else
 	void *stack = task_stack_page(tsk);
 	struct vm_struct *vm = task_stack_vm_area(tsk);
 
@@ -397,6 +414,7 @@ static void account_kernel_stack(struct task_struct *tsk, int account)
 		mod_memcg_obj_state(stack, MEMCG_KERNEL_STACK_KB,
 				    account * (THREAD_SIZE / 1024));
 	}
+#endif
 }
 
 static int memcg_charge_kernel_stack(struct task_struct *tsk)
@@ -451,6 +469,9 @@ void put_task_stack(struct task_struct *tsk)
 
 void free_task(struct task_struct *tsk)
 {
+	cpufreq_task_times_exit(tsk);
+	scs_release(tsk);
+
 #ifndef CONFIG_THREAD_INFO_IN_TASK
 	/*
 	 * The task is finally done with both the stack and thread_info,
@@ -466,7 +487,6 @@ void free_task(struct task_struct *tsk)
 #endif
 	rt_mutex_debug_task_free(tsk);
 	ftrace_graph_exit_task(tsk);
-	put_seccomp_filter(tsk);
 	arch_release_task_struct(tsk);
 	if (tsk->flags & PF_KTHREAD)
 		free_kthread_struct(tsk);
@@ -749,14 +769,6 @@ void __put_task_struct(struct task_struct *tsk)
 }
 EXPORT_SYMBOL_GPL(__put_task_struct);
 
-void __put_task_struct_rcu_cb(struct rcu_head *rhp)
-{
-	struct task_struct *task = container_of(rhp, struct task_struct, rcu);
-
-	__put_task_struct(task);
-}
-EXPORT_SYMBOL_GPL(__put_task_struct_rcu_cb);
-
 void __init __weak arch_task_cache_init(void) { }
 
 /*
@@ -842,6 +854,8 @@ void __init fork_init(void)
 			  NULL, free_vm_stack_cache);
 #endif
 
+	scs_init();
+
 	lockdep_init_task(&init_task);
 	uprobes_init();
 }
@@ -858,7 +872,9 @@ void set_task_stack_end_magic(struct task_struct *tsk)
 	unsigned long *stackend;
 
 	stackend = end_of_stack(tsk);
+#ifndef CONFIG_AMLOGIC_VMAP
 	*stackend = STACK_END_MAGIC;	/* for overflow detection */
+#endif
 }
 
 static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
@@ -898,6 +914,10 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	refcount_set(&tsk->stack_refcount, 1);
 #endif
 
+	if (err)
+		goto free_stack;
+
+	err = scs_prepare(tsk, node);
 	if (err)
 		goto free_stack;
 
@@ -1703,16 +1723,10 @@ static int pidfd_release(struct inode *inode, struct file *file)
 #ifdef CONFIG_PROC_FS
 static void pidfd_show_fdinfo(struct seq_file *m, struct file *f)
 {
+	struct pid_namespace *ns = proc_pid_ns(file_inode(m->file));
 	struct pid *pid = f->private_data;
-	struct pid_namespace *ns;
-	pid_t nr = -1;
 
-	if (likely(pid_has_task(pid, PIDTYPE_PID))) {
-		ns = proc_pid_ns(file_inode(m->file));
-		nr = pid_nr_ns(pid, ns);
-	}
-
-	seq_put_decimal_ll(m, "Pid:\t", nr);
+	seq_put_decimal_ull(m, "Pid:\t", pid_nr_ns(pid, ns));
 	seq_putc(m, '\n');
 }
 #endif
@@ -1749,91 +1763,6 @@ const struct file_operations pidfd_fops = {
 	.show_fdinfo = pidfd_show_fdinfo,
 #endif
 };
-
-/**
- * __pidfd_prepare - allocate a new pidfd_file and reserve a pidfd
- * @pid:   the struct pid for which to create a pidfd
- * @flags: flags of the new @pidfd
- * @pidfd: the pidfd to return
- *
- * Allocate a new file that stashes @pid and reserve a new pidfd number in the
- * caller's file descriptor table. The pidfd is reserved but not installed yet.
-
- * The helper doesn't perform checks on @pid which makes it useful for pidfds
- * created via CLONE_PIDFD where @pid has no task attached when the pidfd and
- * pidfd file are prepared.
- *
- * If this function returns successfully the caller is responsible to either
- * call fd_install() passing the returned pidfd and pidfd file as arguments in
- * order to install the pidfd into its file descriptor table or they must use
- * put_unused_fd() and fput() on the returned pidfd and pidfd file
- * respectively.
- *
- * This function is useful when a pidfd must already be reserved but there
- * might still be points of failure afterwards and the caller wants to ensure
- * that no pidfd is leaked into its file descriptor table.
- *
- * Return: On success, a reserved pidfd is returned from the function and a new
- *         pidfd file is returned in the last argument to the function. On
- *         error, a negative error code is returned from the function and the
- *         last argument remains unchanged.
- */
-static int __pidfd_prepare(struct pid *pid, unsigned int flags, struct file **ret)
-{
-	int pidfd;
-	struct file *pidfd_file;
-
-	if (flags & ~(O_NONBLOCK | O_RDWR | O_CLOEXEC))
-		return -EINVAL;
-
-	pidfd = get_unused_fd_flags(O_RDWR | O_CLOEXEC);
-	if (pidfd < 0)
-		return pidfd;
-
-	pidfd_file = anon_inode_getfile("[pidfd]", &pidfd_fops, pid,
-					flags | O_RDWR | O_CLOEXEC);
-	if (IS_ERR(pidfd_file)) {
-		put_unused_fd(pidfd);
-		return PTR_ERR(pidfd_file);
-	}
-	get_pid(pid); /* held by pidfd_file now */
-	*ret = pidfd_file;
-	return pidfd;
-}
-
-/**
- * pidfd_prepare - allocate a new pidfd_file and reserve a pidfd
- * @pid:   the struct pid for which to create a pidfd
- * @flags: flags of the new @pidfd
- * @pidfd: the pidfd to return
- *
- * Allocate a new file that stashes @pid and reserve a new pidfd number in the
- * caller's file descriptor table. The pidfd is reserved but not installed yet.
- *
- * The helper verifies that @pid is used as a thread group leader.
- *
- * If this function returns successfully the caller is responsible to either
- * call fd_install() passing the returned pidfd and pidfd file as arguments in
- * order to install the pidfd into its file descriptor table or they must use
- * put_unused_fd() and fput() on the returned pidfd and pidfd file
- * respectively.
- *
- * This function is useful when a pidfd must already be reserved but there
- * might still be points of failure afterwards and the caller wants to ensure
- * that no pidfd is leaked into its file descriptor table.
- *
- * Return: On success, a reserved pidfd is returned from the function and a new
- *         pidfd file is returned in the last argument to the function. On
- *         error, a negative error code is returned from the function and the
- *         last argument remains unchanged.
- */
-int pidfd_prepare(struct pid *pid, unsigned int flags, struct file **ret)
-{
-	if (!pid || !pid_has_task(pid, PIDTYPE_TGID))
-		return -EINVAL;
-
-	return __pidfd_prepare(pid, flags, ret);
-}
 
 static void __delayed_free_task(struct rcu_head *rhp)
 {
@@ -1967,6 +1896,8 @@ static __latent_entropy struct task_struct *copy_process(
 	p = dup_task_struct(current, node);
 	if (!p)
 		goto fork_out;
+
+	cpufreq_task_times_init(p);
 
 	/*
 	 * This _must_ happen before we call free_task(), i.e. before we jump
@@ -2155,11 +2086,20 @@ static __latent_entropy struct task_struct *copy_process(
 	 * if the fd table isn't shared).
 	 */
 	if (clone_flags & CLONE_PIDFD) {
-		/* Note that no task has been attached to @pid yet. */
-		retval = __pidfd_prepare(pid, O_RDWR | O_CLOEXEC, &pidfile);
+		retval = get_unused_fd_flags(O_RDWR | O_CLOEXEC);
 		if (retval < 0)
 			goto bad_fork_free_pid;
+
 		pidfd = retval;
+
+		pidfile = anon_inode_getfile("[pidfd]", &pidfd_fops, pid,
+					      O_RDWR | O_CLOEXEC);
+		if (IS_ERR(pidfile)) {
+			put_unused_fd(pidfd);
+			retval = PTR_ERR(pidfile);
+			goto bad_fork_free_pid;
+		}
+		get_pid(pid);	/* held by pidfile now */
 
 		retval = put_user(pidfd, args->pidfd);
 		if (retval)
@@ -2324,6 +2264,7 @@ static __latent_entropy struct task_struct *copy_process(
 		fd_install(pidfd, pidfile);
 
 	proc_fork_connector(p);
+	sched_post_fork(p);
 	cgroup_post_fork(p);
 	cgroup_threadgroup_change_end(current);
 	perf_event_fork(p);
@@ -2425,6 +2366,11 @@ struct task_struct *fork_idle(int cpu)
 	return task;
 }
 
+struct mm_struct *copy_init_mm(void)
+{
+	return dup_mm(NULL, &init_mm);
+}
+
 /*
  *  Ok, this is the main fork-routine.
  *
@@ -2465,6 +2411,8 @@ long _do_fork(struct kernel_clone_args *args)
 
 	if (IS_ERR(p))
 		return PTR_ERR(p);
+
+	cpufreq_task_times_alloc(p);
 
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
@@ -2795,27 +2743,10 @@ static void sighand_ctor(void *data)
 	init_waitqueue_head(&sighand->signalfd_wqh);
 }
 
-void __init mm_cache_init(void)
+void __init proc_caches_init(void)
 {
 	unsigned int mm_size;
 
-	/*
-	 * The mm_cpumask is located at the end of mm_struct, and is
-	 * dynamically sized based on the maximum CPU number this system
-	 * can have, taking hotplug into account (nr_cpu_ids).
-	 */
-	mm_size = sizeof(struct mm_struct) + cpumask_size();
-
-	mm_cachep = kmem_cache_create_usercopy("mm_struct",
-			mm_size, ARCH_MIN_MMSTRUCT_ALIGN,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT,
-			offsetof(struct mm_struct, saved_auxv),
-			sizeof_field(struct mm_struct, saved_auxv),
-			NULL);
-}
-
-void __init proc_caches_init(void)
-{
 	sighand_cachep = kmem_cache_create("sighand_cache",
 			sizeof(struct sighand_struct), 0,
 			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_TYPESAFE_BY_RCU|
@@ -2833,6 +2764,19 @@ void __init proc_caches_init(void)
 			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT,
 			NULL);
 
+	/*
+	 * The mm_cpumask is located at the end of mm_struct, and is
+	 * dynamically sized based on the maximum CPU number this system
+	 * can have, taking hotplug into account (nr_cpu_ids).
+	 */
+	mm_size = sizeof(struct mm_struct) + cpumask_size();
+
+	mm_cachep = kmem_cache_create_usercopy("mm_struct",
+			mm_size, ARCH_MIN_MMSTRUCT_ALIGN,
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT,
+			offsetof(struct mm_struct, saved_auxv),
+			sizeof_field(struct mm_struct, saved_auxv),
+			NULL);
 	vm_area_cachep = KMEM_CACHE(vm_area_struct, SLAB_PANIC|SLAB_ACCOUNT);
 	mmap_init();
 	nsproxy_cache_init();

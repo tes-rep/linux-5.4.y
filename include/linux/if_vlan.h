@@ -574,16 +574,13 @@ static inline int vlan_get_tag(const struct sk_buff *skb, u16 *vlan_tci)
  * vlan_get_protocol - get protocol EtherType.
  * @skb: skbuff to query
  * @type: first vlan protocol
- * @mac_offset: MAC offset
  * @depth: buffer to store length of eth and vlan tags in bytes
  *
  * Returns the EtherType of the packet, regardless of whether it is
  * vlan encapsulated (normal or hardware accelerated) or not.
  */
-static inline __be16 __vlan_get_protocol_offset(const struct sk_buff *skb,
-						__be16 type,
-						int mac_offset,
-						int *depth)
+static inline __be16 __vlan_get_protocol(const struct sk_buff *skb, __be16 type,
+					 int *depth)
 {
 	unsigned int vlan_depth = skb->mac_len, parse_depth = VLAN_MAX_DEPTH;
 
@@ -602,8 +599,7 @@ static inline __be16 __vlan_get_protocol_offset(const struct sk_buff *skb,
 		do {
 			struct vlan_hdr vhdr, *vh;
 
-			vh = skb_header_pointer(skb, mac_offset + vlan_depth,
-						sizeof(vhdr), &vhdr);
+			vh = skb_header_pointer(skb, vlan_depth, sizeof(vhdr), &vhdr);
 			if (unlikely(!vh || !--parse_depth))
 				return 0;
 
@@ -618,12 +614,6 @@ static inline __be16 __vlan_get_protocol_offset(const struct sk_buff *skb,
 	return type;
 }
 
-static inline __be16 __vlan_get_protocol(const struct sk_buff *skb, __be16 type,
-					 int *depth)
-{
-	return __vlan_get_protocol_offset(skb, type, 0, depth);
-}
-
 /**
  * vlan_get_protocol - get protocol EtherType.
  * @skb: skbuff to query
@@ -634,23 +624,6 @@ static inline __be16 __vlan_get_protocol(const struct sk_buff *skb, __be16 type,
 static inline __be16 vlan_get_protocol(const struct sk_buff *skb)
 {
 	return __vlan_get_protocol(skb, skb->protocol, NULL);
-}
-
-/* This version of __vlan_get_protocol() also pulls mac header in skb->head */
-static inline __be16 vlan_get_protocol_and_depth(struct sk_buff *skb,
-						 __be16 type, int *depth)
-{
-	int maclen;
-
-	type = __vlan_get_protocol(skb, type, &maclen);
-
-	if (type) {
-		if (!pskb_may_pull(skb, maclen))
-			type = 0;
-		else if (depth)
-			*depth = maclen;
-	}
-	return type;
 }
 
 /* A getter for the SKB protocol field which will handle VLAN tags consistently

@@ -5,6 +5,7 @@
 #include <linux/of_device.h>
 #include <linux/of_address.h>
 #include <linux/of_iommu.h>
+#include <linux/of_reserved_mem.h>
 #include <linux/dma-mapping.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -70,6 +71,46 @@ int of_device_add(struct platform_device *ofdev)
 	set_dev_node(&ofdev->dev, of_node_to_nid(ofdev->dev.of_node));
 
 	return device_add(&ofdev->dev);
+}
+
+static void
+of_dma_set_restricted_buffer(struct device *dev, struct device_node *np)
+{
+	struct device_node *node, *of_node = dev->of_node;
+	int count, i;
+
+	if (!IS_ENABLED(CONFIG_DMA_RESTRICTED_POOL))
+		return;
+
+	count = of_property_count_elems_of_size(of_node, "memory-region",
+						sizeof(u32));
+	/*
+	 * If dev->of_node doesn't exist or doesn't contain memory-region, try
+	 * the OF node having DMA configuration.
+	 */
+	if (count <= 0) {
+		of_node = np;
+		count = of_property_count_elems_of_size(of_node,
+				"memory-region", sizeof(u32));
+	}
+
+	for (i = 0; i < count; i++) {
+		node = of_parse_phandle(of_node, "memory-region", i);
+		/*
+		 * There might be multiple memory regions, but only one
+		 * restricted-dma-pool region is allowed.
+		 */
+		if (of_device_is_compatible(node, "restricted-dma-pool") &&
+		    of_device_is_available(node))
+			break;
+	}
+
+	/*
+	 * Attempt to initialize a restricted-dma-pool region if one was found.
+	 * Note that count can hold a negative error code.
+	 */
+	if (i < count && of_reserved_mem_device_init_by_idx(dev, of_node, i))
+		dev_warn(dev, "failed to initialise \"restricted-dma-pool\" memory node\n");
 }
 
 /**
@@ -166,7 +207,18 @@ int of_dma_configure(struct device *dev, struct device_node *np, bool force_dma)
 	dev_dbg(dev, "device is%sbehind an iommu\n",
 		iommu ? " " : " not ");
 
+#ifdef CONFIG_AMLOGIC_MODIFY
+	if (iommu && *dev->dma_mask > 0xe0000000) {
+		mask = DMA_BIT_MASK(ilog2(0x80000000 - 1) + 1);
+		dev->coherent_dma_mask &= mask;
+		*dev->dma_mask &= mask;
+	}
+#endif
+
 	arch_setup_dma_ops(dev, dma_addr, size, iommu, coherent);
+
+	if (!iommu)
+		of_dma_set_restricted_buffer(dev, np);
 
 	return 0;
 }
@@ -213,15 +265,14 @@ static ssize_t of_device_get_modalias(struct device *dev, char *str, ssize_t len
 	csize = snprintf(str, len, "of:N%pOFn%c%s", dev->of_node, 'T',
 			 of_node_get_device_type(dev->of_node));
 	tsize = csize;
-	if (csize >= len)
-		csize = len > 0 ? len - 1 : 0;
 	len -= csize;
-	str += csize;
+	if (str)
+		str += csize;
 
 	of_property_for_each_string(dev->of_node, "compatible", p, compat) {
 		csize = strlen(compat) + 1;
 		tsize += csize;
-		if (csize >= len)
+		if (csize > len)
 			continue;
 
 		csize = snprintf(str, len, "C%s", compat);
@@ -247,15 +298,12 @@ int of_device_request_module(struct device *dev)
 	if (size < 0)
 		return size;
 
-	/* Reserve an additional byte for the trailing '\0' */
-	size++;
-
-	str = kmalloc(size, GFP_KERNEL);
+	str = kmalloc(size + 1, GFP_KERNEL);
 	if (!str)
 		return -ENOMEM;
 
 	of_device_get_modalias(dev, str, size);
-	str[size - 1] = '\0';
+	str[size] = '\0';
 	ret = request_module(str);
 	kfree(str);
 

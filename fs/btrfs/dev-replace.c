@@ -125,7 +125,7 @@ no_valid_dev_replace_entry_found:
 		if (btrfs_find_device(fs_info->fs_devices,
 				      BTRFS_DEV_REPLACE_DEVID, NULL, NULL, false)) {
 			btrfs_err(fs_info,
-"replace without active item, run 'device scan --forget' on the target device");
+			"replace devid present without an active replace item");
 			ret = -EUCLEAN;
 		} else {
 			dev_replace->srcdev = NULL;
@@ -535,23 +535,6 @@ leave:
 	return ret;
 }
 
-static int btrfs_check_replace_dev_names(struct btrfs_ioctl_dev_replace_args *args)
-{
-	if (args->start.srcdevid == 0) {
-		if (memchr(args->start.srcdev_name, 0,
-			   sizeof(args->start.srcdev_name)) == NULL)
-			return -ENAMETOOLONG;
-	} else {
-		args->start.srcdev_name[0] = 0;
-	}
-
-	if (memchr(args->start.tgtdev_name, 0,
-		   sizeof(args->start.tgtdev_name)) == NULL)
-	    return -ENAMETOOLONG;
-
-	return 0;
-}
-
 int btrfs_dev_replace_by_ioctl(struct btrfs_fs_info *fs_info,
 			    struct btrfs_ioctl_dev_replace_args *args)
 {
@@ -564,9 +547,10 @@ int btrfs_dev_replace_by_ioctl(struct btrfs_fs_info *fs_info,
 	default:
 		return -EINVAL;
 	}
-	ret = btrfs_check_replace_dev_names(args);
-	if (ret < 0)
-		return ret;
+
+	if ((args->start.srcdevid == 0 && args->start.srcdev_name[0] == '\0') ||
+	    args->start.tgtdev_name[0] == '\0')
+		return -EINVAL;
 
 	ret = btrfs_dev_replace_start(fs_info, args->start.tgtdev_name,
 					args->start.srcdevid,
@@ -934,7 +918,8 @@ int btrfs_dev_replace_cancel(struct btrfs_fs_info *fs_info)
 		up_write(&dev_replace->rwsem);
 
 		/* Scrub for replace must not be running in suspended state */
-		btrfs_scrub_cancel(fs_info);
+		ret = btrfs_scrub_cancel(fs_info);
+		ASSERT(ret != -ENOTCONN);
 
 		trans = btrfs_start_transaction(root, 0);
 		if (IS_ERR(trans)) {

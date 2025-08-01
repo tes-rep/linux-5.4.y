@@ -31,9 +31,6 @@ Optional properties for usb-b-connector:
 - pinctrl-0 : pin control group
   see pinctrl/pinctrl-bindings.txt
 
-Optional properties for usb-a-connector or usb-b-connector:
-- vbus-supply: phandle to a regulator supplying the VBUS voltage.
-
 Optional properties for usb-c-connector:
 - power-role: should be one of "source", "sink" or "dual"(DRP) if typec
   connector has power support.
